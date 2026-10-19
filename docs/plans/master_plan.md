@@ -449,6 +449,7 @@ multi-phase progress page is not required.
 - **Produces:** `server/src/ai/{jev,extract,decide}.ts`, `server/src/fakes/{jev,claude}.ts`, fixtures with one clean, one phishing, one actionable message, `server/fixtures/claude-json-envelope.json`, tests.
 - **Done when:** unit tests assert the exact request body sent to `systemOne` (four `noul` questions, `model: "jev-latest"`, state object never contains instruction text); `decide` quarantines at `>= 0.5` on any security score and never marks a quarantined message actionable; the extractor test spawns a stub executable (via the injected binary path) that emits the recorded envelope, verifies argv contains `--tools ""`, the pinned `--model`, `--output-format json`, `--no-session-persistence`, `--strict-mcp-config` and `--disable-slash-commands` and does NOT contain the bare-mode flag (an explicit negative argv assertion), that the prompt arrived on stdin, and that the parser returns the actions from the envelope's `.result`; a `[]` result yields `none`; empty/non-JSON/`is_error: true` output yields `pending` instead of throwing; a body containing `</message>` plus an instruction still yields a prompt with exactly one closing delimiter; a timeout test proves the child is killed.
 - **Depends on:** 1
+- **Status:** BLOCKED (2026-10-19)
 
 <!-- autofix-applied: 2026-10-19 -->
 ### Step 4: Gmail read-only connector
