@@ -1,0 +1,10 @@
+# Private data: everything under private/ except its README (plan §1.2, §7)
+private/*
+!private/README.md
+
+node_modules/
+dist/
+playwright-report/
+test-results/
+*.log
+.env

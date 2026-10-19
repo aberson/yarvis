@@ -1,0 +1,251 @@
+<title>Yarvis proposal</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  /* Layout: one 62rem column, hairline-ruled sections, ID chips in the gutter so replies can cite them. */
+  :root {
+    --ground: #f6f5f1;
+    --surface: #ffffff;
+    --surface-2: #eeece5;
+    --ink: #1c1e24;
+    --ink-soft: #474b55;
+    --muted: #6b7079;
+    --hairline: #dcd9d0;
+    --hairline-strong: #c4c0b4;
+    --accent: #2f5d8a;
+    --accent-ink: #224a70;
+    --accent-soft: #e2ebf4;
+    --brass: #8a6418;
+    --brass-soft: #f3ead6;
+    --good: #2f6f4e;
+    --good-soft: #e1efe7;
+    --shadow: 0 1px 2px rgba(28,30,36,.05), 0 8px 24px -12px rgba(28,30,36,.14);
+    --sans: system-ui, "Segoe UI Variable Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "Cascadia Code", "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #111318; --surface: #181b22; --surface-2: #1f232c;
+      --ink: #e8e9ec; --ink-soft: #b3b7c0; --muted: #858a95;
+      --hairline: #2a2f3a; --hairline-strong: #3a4150;
+      --accent: #7fa8d6; --accent-ink: #a9c6e8; --accent-soft: #1d2d40;
+      --brass: #d6a94e; --brass-soft: #3a2f16;
+      --good: #6fbf93; --good-soft: #15291f;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -14px rgba(0,0,0,.55);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #111318; --surface: #181b22; --surface-2: #1f232c;
+    --ink: #e8e9ec; --ink-soft: #b3b7c0; --muted: #858a95;
+    --hairline: #2a2f3a; --hairline-strong: #3a4150;
+    --accent: #7fa8d6; --accent-ink: #a9c6e8; --accent-soft: #1d2d40;
+    --brass: #d6a94e; --brass-soft: #3a2f16;
+    --good: #6fbf93; --good-soft: #15291f;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -14px rgba(0,0,0,.55);
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--sans); line-height: 1.6; }
+  .wrap {
+    max-width: 62rem; margin: 0 auto;
+    padding-block: clamp(1.25rem, 4vw, 3rem) 4rem;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  .eyebrow { font-family: var(--mono); font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; color: var(--accent-ink); font-weight: 600; }
+  h1 { font-size: clamp(1.9rem, 4vw, 2.6rem); line-height: 1.15; margin: .3rem 0 .6rem; letter-spacing: -.01em; text-wrap: balance; }
+  h2 { font-size: 1.35rem; margin: 0 0 .4rem; line-height: 1.25; text-wrap: balance; }
+  h3 { font-size: 1rem; margin: 0 0 .3rem; }
+  p { margin: 0 0 .8rem; max-width: 65ch; }
+  .lede { font-size: 1.08rem; color: var(--ink-soft); max-width: 60ch; }
+  section { padding: 2rem 0; border-top: 1px solid var(--hairline); }
+  section > .eyebrow { display: block; margin-bottom: .35rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .93rem; }
+  th, td { text-align: left; vertical-align: top; padding: .55rem .6rem; border-bottom: 1px solid var(--hairline); }
+  th { font-family: var(--mono); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  code, .mono { font-family: var(--mono); font-size: .88em; }
+  code { background: var(--surface-2); padding: .08em .35em; border-radius: 3px; }
+  pre { background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 6px; padding: .8rem 1rem; overflow-x: auto; font-size: .85rem; line-height: 1.5; margin: .5rem 0 1rem; }
+  pre code { background: none; padding: 0; }
+  .id { display: inline-block; font-family: var(--mono); font-size: .72rem; font-weight: 700; letter-spacing: .04em; padding: .1em .45em; border-radius: 4px; border: 1px solid var(--hairline-strong); white-space: nowrap; }
+  .id.p { background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; }
+  .id.d { background: var(--brass-soft); color: var(--brass); border-color: transparent; }
+  .tag { display: inline-block; font-family: var(--mono); font-size: .7rem; padding: .05em .45em; border-radius: 999px; border: 1px solid var(--hairline-strong); color: var(--ink-soft); }
+  .tag.wa { color: var(--good); border-color: var(--good); }
+  .tag.gm { color: var(--accent-ink); border-color: var(--accent); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: .9rem; margin: .8rem 0; }
+  .card { background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px; padding: .9rem 1rem; box-shadow: var(--shadow); min-width: 0; }
+  .card h3 { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+  .card p { font-size: .93rem; margin-bottom: .45rem; }
+  .card .k { color: var(--muted); font-family: var(--mono); font-size: .7rem; text-transform: uppercase; letter-spacing: .1em; }
+  .timeline { list-style: none; padding: 0; margin: .8rem 0; display: grid; gap: .6rem; }
+  .timeline li { display: grid; grid-template-columns: 4.5rem 1fr; gap: .8rem; align-items: start; min-width: 0; }
+  .timeline .step { font-family: var(--mono); font-size: .78rem; font-weight: 700; color: var(--accent-ink); padding-top: .15rem; }
+  .timeline .step.m { color: var(--brass); }
+  .timeline .body { min-width: 0; }
+  .timeline .body strong { display: block; }
+  .timeline .body span { color: var(--ink-soft); font-size: .93rem; }
+  .flow { font-family: var(--mono); font-size: .82rem; background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px; padding: .9rem 1rem; overflow-x: auto; white-space: pre; line-height: 1.55; }
+  .note { border-left: 3px solid var(--brass); background: var(--brass-soft); padding: .6rem .9rem; border-radius: 0 6px 6px 0; margin: .8rem 0; font-size: .93rem; max-width: 65ch; }
+  ul.plain { padding-left: 1.2rem; margin: .3rem 0 .8rem; }
+  ul.plain li { margin-bottom: .3rem; }
+  header { padding-bottom: 1.5rem; }
+  .meta { color: var(--muted); font-size: .88rem; font-family: var(--mono); }
+  a { color: var(--accent-ink); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (max-width: 480px) { .timeline li { grid-template-columns: 1fr; gap: .15rem; } }
+</style>
+
+<div class="wrap">
+<header>
+  <span class="eyebrow">Proposal · v1 · 2026-10-19</span>
+  <h1>Yarvis v0: a read-only to-do radar for WhatsApp and Gmail</h1>
+  <p class="lede">One Refresh button pulls your allowlisted WhatsApp chats and your Gmail inbox since October 1, screens every message with Jev, turns the real asks into one-line to-dos, and lands them in a Google Sheet you can see on a small React page. Nothing is ever written back to WhatsApp or Gmail.</p>
+  <p class="meta">Plan: yarvis/docs/plans/master_plan.md · Reply with IDs (see the last section)</p>
+</header>
+
+<section id="heard">
+  <span class="eyebrow">What I heard</span>
+  <h2>Six asks, six deliverables.</h2>
+  <div class="scroll"><table>
+    <tr><th>You asked for</th><th>You get</th><th>Where it lives</th></tr>
+    <tr><td>WhatsApp to-dos, read only</td><td>Refresh runs a short Baileys linked-device session over the chats you list, then disconnects. Send functions are never wired; a test fails the build if one appears.</td><td>Step 5</td></tr>
+    <tr><td>Gmail from Oct 1 2026, read only</td><td>Desktop OAuth pinned to <code>gmail.readonly</code>, re-checked against the token at every start. Inbox incl. Promotions and Social; Gmail's own Spam and Trash excluded.</td><td>Step 4</td></tr>
+    <tr><td>Jev security check with quarantine</td><td>Every message gets one Jev call with four yes/no questions. Phishing, malicious or spam at or above 0.5 goes to a Quarantine tab and page and never reaches the extractor.</td><td>Step 3, 6</td></tr>
+    <tr><td>Data in a Google Sheet</td><td>Two tabs, Todos and Quarantine, upserted by id through a service account. The sheet is the system of record; the UI reads it.</td><td>Step 2</td></tr>
+    <tr><td>Public code, private config</td><td><code>private/</code> is gitignored except its README: OAuth client, tokens, service-account key, TypeSafe key, WhatsApp auth, settings, cache. A test asserts nothing else under it is tracked.</td><td>Step 1</td></tr>
+    <tr><td>React front end: to-dos, connected apps, settings, pirate toggle</td><td>Four routes: Todos (source chips <span class="tag wa">whatsapp</span> <span class="tag gm">gmail</span>, done checkbox, Refresh with stage progress, Open sheet), Quarantine, Connected apps, Settings with the pirate toggle.</td><td>Step 1, 2, 6</td></tr>
+  </table></div>
+  <h3 style="margin-top:1.2rem">Done means all five of these hold on your real accounts (M4)</h3>
+  <ul class="plain">
+    <li><strong>G1</strong> A combined to-do list, each item tagged <span class="tag wa">whatsapp</span> or <span class="tag gm">gmail</span>.</li>
+    <li><strong>G2</strong> A Refresh button that pulls new messages and updates the list.</li>
+    <li><strong>G3</strong> The same entries visible in the Google Sheet (Todos and Quarantine tabs).</li>
+    <li><strong>G4</strong> A spam folder: the Quarantine page with Jev's scores and reasons.</li>
+    <li><strong>G5</strong> A pirate-mode toggle that swaps the UI strings and survives restart.</li>
+  </ul>
+  <div class="note"><strong>Guardrails, as enforced.</strong> Gmail: the OAuth scope is exactly read-only, tested by equality and re-checked against the token at every start. WhatsApp: the connector exports nothing that can send, and a test fails the build if a send or read-receipt call appears anywhere in the server. Sheets is the only module with a write scope. Quarantined mail never reaches Claude, and a Jev outage stops the run rather than letting unscreened mail through. Plan sections 1.1 and 1.2 carry the full mapping.</div>
+</section>
+
+<section id="why">
+  <span class="eyebrow">Why this shape</span>
+  <h2>Three findings drove the design.</h2>
+  <ul class="plain">
+    <li><strong>WhatsApp cannot be exported from code.</strong> Export Chat is a phone-side share action and the desktop app has no export. The only automatable read is a linked device, which is what Baileys is. Running it on demand keeps it a tool, not a daemon.</li>
+    <li><strong>Gmail and Sheets are already solved in this workspace.</strong> pta_finance carries a scope-pinned read-only Gmail module and a row-targeted atomic Sheets client. Yarvis ports both patterns to TypeScript rather than inventing new ones.</li>
+    <li><strong>Jev classifies, it never generates.</strong> That makes it safe to show it a hostile email. The generating model (Claude) only ever sees messages Jev cleared, and sees them wrapped as untrusted data with no tools.</li>
+  </ul>
+  <div class="flow">POST /api/refresh
+  whatsapp  on-demand Baileys drain of allowlisted chats  -> cache
+  gmail     OAuth(readonly) list+get since 2026-10-01     -> cache
+  jev       1 call/message: phishing, malicious, spam, action
+              quarantined = max(security) >= 0.50
+              actionable  = !quarantined && action >= 0.60
+  extract   claude -p --bare --tools "" (JSON array of 1..3 tasks)
+  sheets    upsert Quarantine rows, upsert Todo rows, save cursors</div>
+</section>
+
+<section id="phases">
+  <span class="eyebrow">Timeline</span>
+  <h2>One phase: seven automated steps, then six things only you can do.</h2>
+  <ul class="timeline">
+    <li><span class="step">Step 1</span><div class="body"><strong>Scaffold, private split, pirate toggle</strong><span>Monorepo, settings loader, health and settings routes, nav shell. Pirate strings switch on a toggle in fake mode.</span></div></li>
+    <li><span class="step">Step 2</span><div class="body"><strong>Sheets store and Todos page</strong><span>Service-account client with ensureTab and upsert-by-id, Todos and Quarantine pages fed from fixtures.</span></div></li>
+    <li><span class="step">Step 3</span><div class="body"><strong>Jev and Claude seams</strong><span>Four noul questions per message, threshold routing, the single claude -p subprocess with tolerant parsing.</span></div></li>
+    <li><span class="step">Step 4</span><div class="body"><strong>Gmail read-only connector</strong><span>gmail:auth, exact-scope pin, inbox query, MIME to text.</span></div></li>
+    <li><span class="step">Step 5</span><div class="body"><strong>WhatsApp on-demand connector</strong><span>wa:link QR, wa:chats listing, drain with allowlist and since filters, read-only grep guard.</span></div></li>
+    <li><span class="step">Step 6</span><div class="body"><strong>Refresh pipeline, status, Connected apps</strong><span>runRefresh with five stages, job polling, decisions cache, pending-extraction retry. Integration test proves a phishing fixture never reaches the fake Claude.</span></div></li>
+    <li><span class="step">Step 7</span><div class="body"><strong>Fake-mode smoke gate and CI</strong><span>npm run smoke drives a full refresh with fakes; GitHub Actions runs it plus the private-folder leak check.</span></div></li>
+    <li><span class="step m">M1</span><div class="body"><strong>Google Cloud, Gmail consent, sheet share</strong><span>OAuth desktop client, service account, share the sheet, run gmail:auth and doctor.</span></div></li>
+    <li><span class="step m">M2</span><div class="body"><strong>TypeSafe key and Jev probe</strong><span>Key into private/.env; doctor scores a known phishing text above 0.5 and a clean one below.</span></div></li>
+    <li><span class="step m">M3</span><div class="body"><strong>Link WhatsApp, fill the allowlist</strong><span>Scan the QR, copy the chat JIDs you want into settings.</span></div></li>
+    <li><span class="step m">M4</span><div class="body"><strong>First real refresh</strong><span>The real smoke gate: stages complete, rows in both tabs, nothing changed on either account.</span></div></li>
+    <li><span class="step m">M5</span><div class="body"><strong>Ten refreshes over two days</strong><span>Includes one after 24 h closed to learn whether WhatsApp backfills; idempotency; pending-extraction recovery; findings file.</span></div></li>
+    <li><span class="step m">M6</span><div class="body"><strong>Publish check</strong><span>git ls-files private is exactly the README; secret grep is clean; CI green.</span></div></li>
+  </ul>
+  <p><strong>Afterwards</strong> (in this order, from the dev root; build in an Opus window):</p>
+  <pre><code>/repo-init yarvis
+/plan-expedite --plan yarvis/docs/plans/master_plan.md
+/build-phase --plan yarvis/docs/plans/master_plan.md</code></pre>
+</section>
+
+<section id="picked">
+  <span class="eyebrow">Operator choices</span>
+  <h2>Locked in from our planning questions.</h2>
+  <div class="scroll"><table>
+    <tr><th>ID</th><th>Choice</th><th>Over</th></tr>
+    <tr><td><span class="id p">P1</span></td><td>WhatsApp via on-demand Baileys linked-device session; ToS risk accepted</td><td>Manual chat exports; exports first then Baileys</td></tr>
+    <tr><td><span class="id p">P2</span></td><td>Jev for both the security screen and "is this an action item"</td><td>Claude for detection; keyword rules</td></tr>
+    <tr><td><span class="id p">P3</span></td><td>Claude extraction step rewrites each hit into a one-line action</td><td>Jev-only rows with raw message text</td></tr>
+    <tr><td><span class="id p">P4</span></td><td>Node/TypeScript end to end</td><td>Python FastAPI plus Node sidecar; Python only</td></tr>
+    <tr><td><span class="id p">P5</span></td><td>Allowlisted WhatsApp chats plus the whole Gmail inbox incl. Promotions and Social</td><td>Self-chat plus a Gmail label; everything</td></tr>
+    <tr><td><span class="id p">P6</span></td><td>Done checkbox in the UI writes status to the sheet</td><td>View only</td></tr>
+    <tr><td><span class="id p">P7</span></td><td>Pirate mode swaps UI strings only</td><td>Also rewrite to-dos in pirate voice</td></tr>
+    <tr><td><span class="id p">P8</span></td><td>dev/yarvis nested repo, public GitHub aberson/yarvis</td><td>Private repo</td></tr>
+    <tr><td><span class="id p">P9</span></td><td>Read only from WhatsApp and Gmail; Google Sheets is the only external write (original brief)</td><td>n/a</td></tr>
+    <tr><td><span class="id p">P10</span></td><td>Gmail read from 2026-10-01 forward (original brief)</td><td>n/a</td></tr>
+  </table></div>
+</section>
+
+<section id="defaults">
+  <span class="eyebrow">Agent defaults</span>
+  <h2>Defaults worth your eyes. Reference by ID to tweak.</h2>
+  <div class="cards">
+    <div class="card"><h3><span class="id d">D1</span> Jev thresholds 0.50 / 0.60</h3><p><span class="k">What</span> Quarantine when any of phishing, malicious, spam is at or above 0.50. Extract when action is at or above 0.60.</p><p><span class="k">Why</span> Jev's noul is a calibrated probability; 0.5 is the neutral line for a security filter, and a slightly higher bar on action keeps chatter out of the list.</p><p><span class="k">Tweak</span> Either number; both live in settings and the UI shows the scores.</p></div>
+    <div class="card"><h3><span class="id d">D2</span> One Jev call per message</h3><p><span class="k">What</span> All four questions ride in one request; the code throws away the action answer for quarantined messages.</p><p><span class="k">Why</span> Jev evaluates questions in isolation and never generates text, so batching halves calls without weakening the guardrail, which is "quarantined content never reaches Claude".</p><p><span class="k">Tweak</span> Two sequential calls if you want the action question literally never asked of flagged mail.</p></div>
+    <div class="card"><h3><span class="id d">D3</span> Jev down means Refresh fails closed</h3><p><span class="k">What</span> If Jev errors, the job stops at the jev stage with no sheet writes; messages stay cached for next time.</p><p><span class="k">Why</span> No unscreened message should ever be extracted or shown as a to-do.</p><p><span class="k">Tweak</span> Fail-open for WhatsApp only (it has no inbox-style spam exposure).</p></div>
+    <div class="card"><h3><span class="id d">D4</span> Claude seam: bare, no tools, fast model</h3><p><span class="k">What</span> <code>claude -p --bare --tools "" --model claude-haiku-5-5 --output-format json</code>, prompt on stdin, 60 s timeout, tree kill. Non-JSON or failure writes the row with the original text and a pending flag; next Refresh retries.</p><p><span class="k">Why</span> Your global config runs claude -p as a full agentic harness unless told otherwise (a workspace lesson). Pending beats dropping the to-do.</p><p><span class="k">Tweak</span> Model alias, timeout, or 1 action per message instead of up to 3.</p></div>
+    <div class="card"><h3><span class="id d">D5</span> WhatsApp also gets the quarantine questions</h3><p><span class="k">What</span> Allowlisted WhatsApp messages run the same four questions, so a phishing link in a group chat lands in Quarantine too.</p><p><span class="k">Why</span> The questions are free once the call is made, and the folder is more useful if it is complete.</p><p><span class="k">Tweak</span> Action question only for WhatsApp.</p></div>
+    <div class="card"><h3><span class="id d">D6</span> Sheets via service account</h3><p><span class="k">What</span> A service-account key writes the sheet; you share the sheet with its email once.</p><p><span class="k">Why</span> Keeps the Gmail OAuth token at exactly one scope. Same split pta_finance uses.</p><p><span class="k">Tweak</span> Reuse the Gmail OAuth client with a second token file for Sheets instead.</p></div>
+    <div class="card"><h3><span class="id d">D7</span> Sheet schema and id formats</h3><p><span class="k">What</span> Todos: id, source, status, action, original_text, sender, context, message_date, link, jev_action, created_at, updated_at. Quarantine: id, source, sender, context, message_date, link, three jev scores, reason, created_at. Ids: <code>gmail:&lt;msgId&gt;</code>, <code>wa:&lt;jid&gt;:&lt;keyId&gt;</code>, todo <code>&lt;msg&gt;#n</code>.</p><p><span class="k">Why</span> Enough to render, audit, and tune thresholds from the sheet alone.</p><p><span class="k">Tweak</span> Add or drop columns; headers are one shared constant.</p></div>
+    <div class="card"><h3><span class="id d">D8</span> Sheet is the record, cache is a cursor</h3><p><span class="k">What</span> JSONL caches under private/cache remember what was seen and scored; deleting them costs API calls, not data.</p><p><span class="k">Why</span> Re-runs stay idempotent and cheap, and you can hand-edit the sheet freely.</p><p><span class="k">Tweak</span> SQLite instead of JSONL if the cache grows past a few MB.</p></div>
+    <div class="card"><h3><span class="id d">D9</span> Baileys drain window 8 s quiet, 60 s max</h3><p><span class="k">What</span> The session closes after 8 s with no new events or 60 s total; presence off, full-history sync off, browser identity "Yarvis".</p><p><span class="k">Why</span> Short sessions keep the footprint of an unofficial client minimal.</p><p><span class="k">Tweak</span> Longer windows, or keep the session open while the app runs if M5 shows no backfill.</p></div>
+    <div class="card"><h3><span class="id d">D10</span> Express on 127.0.0.1:8787, Vite on 5173</h3><p><span class="k">What</span> Localhost-only binding is the entire auth model; Vite pinned with strictPort and host 127.0.0.1.</p><p><span class="k">Why</span> Single user on one machine; the Windows Vite rules from the workspace.</p><p><span class="k">Tweak</span> Ports, or Fastify/Hono instead of Express.</p></div>
+    <div class="card"><h3><span class="id d">D11</span> Fake mode is a first-class run mode</h3><p><span class="k">What</span> <code>YARVIS_FAKE=1</code> swaps all five seams for seeded fakes; runtime reviewers, CI smoke, and your first click-through all use it.</p><p><span class="k">Why</span> Every build step can gate without credentials, and the UI can be seen before any account is linked.</p><p><span class="k">Tweak</span> None expected.</p></div>
+    <div class="card"><h3><span class="id d">D12</span> Quarantine is its own page</h3><p><span class="k">What</span> Four nav items: Todos, Quarantine, Connected apps, Settings.</p><p><span class="k">Why</span> A folder deserves a route, and three menus plus one folder stays simple.</p><p><span class="k">Tweak</span> Fold Quarantine under Settings as you first described.</p></div>
+    <div class="card"><h3><span class="id d">D13</span> Refresh is an in-process job</h3><p><span class="k">What</span> POST returns 202, the page polls status every 2 s, a second POST while running gets 409. No scheduler.</p><p><span class="k">Why</span> A refresh can take a minute with live Jev and Claude calls; the button should not hang.</p><p><span class="k">Tweak</span> Synchronous call if you prefer fewer moving parts.</p></div>
+    <div class="card"><h3><span class="id d">D14</span> Body caps: 4000 chars stored, 2000 to Jev</h3><p><span class="k">What</span> Plain text preferred over HTML; links extracted separately and included in the Jev state.</p><p><span class="k">Why</span> Keeps token cost and sheet cells small while giving Jev the parts that signal phishing.</p><p><span class="k">Tweak</span> Either cap.</p></div>
+    <div class="card"><h3><span class="id d">D15</span> Reviewer flags</h3><p><span class="k">What</span> Full reviewers (code plus runtime in fake mode) on Steps 1, 2, 6; code reviewers elsewhere; worktree isolation.</p><p><span class="k">Why</span> Those three steps change visible UI; the rest are connectors and seams the suite covers.</p><p><span class="k">Tweak</span> Downgrade to code everywhere for speed.</p></div>
+  </div>
+</section>
+
+<section id="not">
+  <span class="eyebrow">Not in v0</span>
+  <h2>Cut on purpose.</h2>
+  <ul class="plain">
+    <li>Scheduled or background refresh. Manual button and CLI only.</li>
+    <li>Any write to WhatsApp or Gmail: sending, replying, labeling, archiving, read receipts.</li>
+    <li>Pirate voice in the data, a chat UI, voice input, calendar, reminders, notifications.</li>
+    <li>Hosting, multi-user auth, mobile layout polish beyond "works at phone width".</li>
+    <li>Attachments: only text bodies and link URLs are read.</li>
+  </ul>
+</section>
+
+<section id="risks">
+  <span class="eyebrow">Risks</span>
+  <h2>What could bite, and the built-in answer.</h2>
+  <div class="scroll"><table>
+    <tr><th>Risk</th><th>Answer</th></tr>
+    <tr><td>WhatsApp does not backfill messages sent while Yarvis was closed</td><td>M5 tests it explicitly after 24 h closed; the fallback is a one-flag "stay connected while the app runs" mode.</td></tr>
+    <tr><td>WhatsApp acts against the personal number for using an unofficial client</td><td>Read-only pins, no presence, no receipts, one short session per refresh. Risk accepted in P1.</td></tr>
+    <tr><td>Baileys 7 is a release candidate and the API moves</td><td>Exact version pinned; Step 5 reads the installed type definitions before coding.</td></tr>
+    <tr><td>Jev misses a phishing mail and Claude sees it</td><td>Claude runs with no tools and must output a JSON array; the message is wrapped as untrusted data. The threshold is tunable and scores are visible.</td></tr>
+    <tr><td>Jev rate limits on the first big inbox pull</td><td>SDK rate-limit errors back off; the decisions cache scores each message once; the since-date bounds the first run.</td></tr>
+    <tr><td>Gmail refresh token expires while the OAuth app is in Testing mode</td><td>Expected roughly weekly; Connected apps shows the error and gmail:auth re-mints in a minute.</td></tr>
+    <tr><td>A secret lands in the public repo</td><td>private/ gitignored except its README; a test and CI assert the tracked set; M6 greps before publishing.</td></tr>
+    <tr><td>Message text goes to TypeSafe and Anthropic</td><td>Accepted in P2 and P3; Jev gets sender, context, trimmed body and links; Claude gets only Jev-cleared messages.</td></tr>
+  </table></div>
+</section>
+
+<section id="reply">
+  <span class="eyebrow">How to reply</span>
+  <h2>Scan, then reply in chat. IDs make it cheap.</h2>
+  <p>Silence means the plan stands. Otherwise reply with one line per change:</p>
+  <pre><code>D1 -> quarantine 0.4, action 0.7
+D2 -> two calls, never ask action of flagged mail
+D12 -> fold Quarantine under Settings
+P7 -> also pirate voice in to-dos</code></pre>
+  <p>Sources: <code>yarvis/docs/plans/master_plan.md</code> (plan, Appendix 12.5 Decision Inventory), <code>yarvis/CLAUDE.md</code>, this proposal at <code>yarvis/docs/proposals/yarvis-proposal.html</code>.</p>
+</section>
+</div>
