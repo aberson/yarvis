@@ -1,0 +1,12 @@
+node_modules/
+dist/
+playwright-report/
+test-results/
+blob-report/
+coverage/
+private/
+package-lock.json
+# Prose is owned by the plan/repo skills and not reformatted by the code formatter.
+*.md
+docs/
+.build-step/

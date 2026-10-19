@@ -1,0 +1,68 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #1d2330;
+  background: #f6f7f9;
+}
+body {
+  margin: 0;
+}
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: #1d2330;
+  color: #fff;
+}
+.brand {
+  font-weight: 700;
+}
+.badge {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f0b429;
+  color: #1d2330;
+}
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+nav a {
+  color: #c9d1e0;
+  text-decoration: none;
+}
+nav a.active {
+  color: #fff;
+  text-decoration: underline;
+}
+main {
+  padding: 16px;
+  max-width: 960px;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.muted {
+  color: #5b6475;
+}
+.error {
+  color: #b42318;
+}
+button {
+  min-width: 64px;
+  padding: 6px 12px;
+}
+dl {
+  display: grid;
+  grid-template-columns: max-content auto;
+  gap: 4px 16px;
+}
+dd {
+  margin: 0;
+}

@@ -1,0 +1,48 @@
+{
+  "name": "yarvis",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Single-user local home assistant: read-only WhatsApp + Gmail to-dos, screened by Jev, stored in a Google Sheet.",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "workspaces": [
+    "shared",
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "setup": "tsx server/src/setup.ts",
+    "dev": "concurrently -k -n server,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:fake": "cross-env YARVIS_FAKE=1 concurrently -k -n server,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx watch --clear-screen=false server/src/main.ts",
+    "dev:web": "npm run dev -w web",
+    "yarvis": "tsx server/src/cli.ts",
+    "build": "tsc -b server/tsconfig.build.json && npm run build -w web",
+    "start": "concurrently -k -n server,web -c blue,magenta \"node server/dist/main.js\" \"npm run preview -w web\"",
+    "typecheck": "tsc -p tsconfig.json && tsc -p shared/tsconfig.json && tsc -p server/tsconfig.json && tsc -p web/tsconfig.json",
+    "lint": "eslint . && npm run format:check",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "e2e": "playwright test -c web/playwright.config.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.5",
+    "@types/supertest": "^7.2.1",
+    "concurrently": "^10.0.6",
+    "cross-env": "^10.1.0",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "supertest": "^7.3.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^5.0.5"
+  }
+}

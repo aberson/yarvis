@@ -1,0 +1,12 @@
+{
+  "sheetId": "<google sheet id>",
+  "pirate": false,
+  "since": "2026-10-01",
+  "whatsapp": { "allowlist": [{ "jid": "15555550123@s.whatsapp.net", "name": "Me" }] },
+  "jev": {
+    "model": "jev-latest",
+    "concurrency": 2,
+    "thresholds": { "quarantine": 0.5, "action": 0.6 }
+  },
+  "extract": { "model": "claude-haiku-5-5", "timeoutMs": 60000 }
+}

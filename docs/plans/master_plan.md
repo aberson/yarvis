@@ -427,6 +427,7 @@ multi-phase progress page is not required.
 - **Produces:** `package.json` (root + 3 workspaces), `settings.example.json`, `shared/src/types.ts`, `server/src/{index,main,cli,config/*,routes/{health,settings}}.ts`, `web/src/{App,api,i18n/strings,pages/Settings}.tsx`, `private/README.md`, `.gitignore`, `web/e2e/smoke.spec.ts`.
 - **Done when:** `npm run typecheck`, `npm run lint`, `npm test` pass; a test asserts `git ls-files --cached --others --exclude-standard private` returns exactly `private/README.md` and that a planted `private/settings.json` is excluded by `.gitignore` (CI and M6 keep plain `git ls-files private` on the committed tree); a request with a forged `Host` gets 403, a request whose `Host` names the server's actual non-default bound port (ephemeral-port test server) is accepted, and `POST`/`PATCH` without `X-Yarvis: 1` gets 403; `PATCH /api/settings {pirate:true}` persists to `private/settings.json` (temp+rename) and the Playwright smoke (started via `npm run dev:fake` on Windows) sees the nav labels switch to the pirate table and back; `npm run yarvis -- --help` lists gmail:auth, wa:link, wa:chats, doctor, refresh.
 - **Depends on:** none
+- **Status:** DONE (2026-10-19)
 
 <!-- autofix-applied: 2026-10-19 -->
 ### Step 2: Sheets store + Todos page

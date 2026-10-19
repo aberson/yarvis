@@ -1,0 +1,96 @@
+// Express app factory (plan §5, §6). Localhost-only is the auth model, so createApp hardens it
+// against DNS rebinding and cross-site simple POSTs (D22, D28):
+//   - 403 bad_host unless Host is 127.0.0.1:<p> or localhost:<p>, where <p> is the port the request
+//     actually arrived on (req.socket.localPort) or the configured web port (Vite proxy, D31);
+//   - 403 missing_x_yarvis on any mutating method without header `X-Yarvis: 1`.
+// No CORS middleware: the web app reaches the API through the Vite /api proxy (D31).
+import express, { type ErrorRequestHandler, type RequestHandler } from "express";
+import { X_YARVIS_VALUE } from "@yarvis/shared";
+import type { Paths } from "./config/paths.js";
+import { SettingsError } from "./config/settings.js";
+import { accessLog, type AccessLogSink } from "./access-log.js";
+import { sendError } from "./http.js";
+import { healthRouter } from "./routes/health.js";
+import { settingsRouter } from "./routes/settings.js";
+
+export interface AppDeps {
+  paths: Paths;
+  /** YARVIS_FAKE=1: every external seam is wired to an in-memory fake (later steps). */
+  fake: boolean;
+  /** The web port the Host guard also accepts (YARVIS_WEB_PORT, default 5173). */
+  webPort: number;
+  /**
+   * Sink for the one-line-per-/api-request access log; `false` disables it. Defaults to stdout,
+   * except under Vitest (VITEST set) where it is silent so test output stays clean.
+   */
+  accessLog?: AccessLogSink | false;
+}
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** True when `host` names loopback on one of `ports` (case-insensitive host name). */
+export function isAllowedHost(host: string | undefined, ports: readonly number[]): boolean {
+  if (!host) return false;
+  const h = host.trim().toLowerCase();
+  return ports.some((p) => h === `127.0.0.1:${p}` || h === `localhost:${p}`);
+}
+
+export function localhostGuard(opts: { webPort: number }): RequestHandler {
+  return (req, res, next) => {
+    const ports = [req.socket.localPort, opts.webPort].filter(
+      (p): p is number => typeof p === "number",
+    );
+    if (!isAllowedHost(req.headers.host, ports)) {
+      sendError(res, "bad_host", "Host header is not an allowed loopback origin");
+      return;
+    }
+    if (!SAFE_METHODS.has(req.method) && req.get("x-yarvis") !== X_YARVIS_VALUE) {
+      sendError(res, "missing_x_yarvis", "mutating requests require header X-Yarvis: 1");
+      return;
+    }
+    next();
+  };
+}
+
+const errorHandler: ErrorRequestHandler = (err: unknown, _req, res, next) => {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+  const e = (err ?? {}) as { type?: string; status?: number };
+  if (e.type === "entity.parse.failed") {
+    sendError(res, "bad_request", "request body is not valid JSON");
+    return;
+  }
+  if (e.type === "entity.too.large") {
+    sendError(res, "bad_request", "request body too large");
+    return;
+  }
+  if (typeof e.status === "number" && e.status >= 400 && e.status < 500) {
+    // Other client errors raised by express/body-parser (malformed URL, unsupported charset, ...).
+    sendError(res, "bad_request", "bad request");
+    return;
+  }
+  if (err instanceof SettingsError) {
+    sendError(res, "settings_invalid", err.message);
+    return;
+  }
+  console.error("[yarvis] unhandled error:", err instanceof Error ? err.message : String(err));
+  sendError(res, "internal", "internal server error");
+};
+
+export function createApp(deps: AppDeps): express.Express {
+  const app = express();
+  app.disable("x-powered-by");
+  const sink = deps.accessLog ?? (process.env.VITEST ? false : (line: string) => console.log(line));
+  if (sink) app.use(accessLog(sink)); // first, so guard rejections are logged too
+  app.use(localhostGuard({ webPort: deps.webPort }));
+  app.use(express.json({ limit: "64kb" }));
+  app.use(healthRouter({ fake: deps.fake }));
+  app.use(settingsRouter({ paths: deps.paths }));
+  app.use((_req, res) => {
+    sendError(res, "not_found");
+  });
+  app.use(errorHandler);
+  return app;
+}
