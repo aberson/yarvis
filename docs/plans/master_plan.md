@@ -422,7 +422,7 @@ multi-phase progress page is not required.
 ### Step 1: Scaffold, private/ split, settings + pirate toggle
 - **Problem:** Create the npm-workspaces monorepo (`shared`, `server`, `web`), TypeScript strict configs, ESLint (+ `eslint-config-prettier`)/Prettier, Vitest, Playwright; `private/` layout with `.gitignore` (`private/*` except `private/README.md`) and `npm run setup`; settings loader/validator (zod) with repo-root `settings.example.json` (§12.1 shape); Express app factory with the localhost guard (Host allowlist + `X-Yarvis: 1` on POST/PATCH, §6/D22), `/api/health`, `GET/PATCH /api/settings`; React shell with nav (Todos, Quarantine, Connected apps, Settings) and a working Settings page pirate toggle backed by `en`/`pirate` string tables; `server/src/cli.ts` verb dispatcher (verbs not yet built exit non-zero with `not yet implemented`); root scripts `setup`, `dev` (`concurrently` server + web), `dev:fake` (`cross-env YARVIS_FAKE=1`), `yarvis` (`tsx server/src/cli.ts`), `build` (`tsc -b` for shared/server + `vite build`), `start` (node dist + `vite preview --port 5173 --strictPort --host 127.0.0.1`), `typecheck`, `lint` (eslint + `format:check`), `test`, `e2e` (D25).
 - **Type:** code
-- **Issue:** #
+- **Issue:** #2
 - **Flags:** --reviewers full --start-cmd "npm run dev:fake" --url http://127.0.0.1:5173
 - **Produces:** `package.json` (root + 3 workspaces), `settings.example.json`, `shared/src/types.ts`, `server/src/{index,main,cli,config/*,routes/{health,settings}}.ts`, `web/src/{App,api,i18n/strings,pages/Settings}.tsx`, `private/README.md`, `.gitignore`, `web/e2e/smoke.spec.ts`.
 - **Done when:** `npm run typecheck`, `npm run lint`, `npm test` pass; a test asserts `git ls-files --cached --others --exclude-standard private` returns exactly `private/README.md` and that a planted `private/settings.json` is excluded by `.gitignore` (CI and M6 keep plain `git ls-files private` on the committed tree); a request with a forged `Host` gets 403, a request whose `Host` names the server's actual non-default bound port (ephemeral-port test server) is accepted, and `POST`/`PATCH` without `X-Yarvis: 1` gets 403; `PATCH /api/settings {pirate:true}` persists to `private/settings.json` (temp+rename) and the Playwright smoke (started via `npm run dev:fake` on Windows) sees the nav labels switch to the pirate table and back; `npm run yarvis -- --help` lists gmail:auth, wa:link, wa:chats, doctor, refresh.
@@ -432,7 +432,7 @@ multi-phase progress page is not required.
 ### Step 2: Sheets store + Todos page
 - **Problem:** Implement `connectors/sheets.ts` (service account, `ensureTab` with pinned headers from `shared/src/sheet.ts` incl. `extraction_status` and `released_at`, `readRows`, `upsertRows` = one values.batchUpdate + one values.append that merges existing rows under the §3.4 column-ownership rule, retry/backoff on 429/500/503, 30 s per-call timeout, header mismatch = hard error) and `FakeSheets`; `Todo`/`QuarantineItem` derived from the header tuples (§3.4); routes `GET /api/todos` (10 s cache, invalidated by PATCH), `PATCH /api/todos/:id` (update-only, §6), `GET /api/quarantine`; Todos page (source chips, done checkbox, hide-done toggle, Open-sheet link) and Quarantine page rendering from the API; `api.ts` encodes ids with `encodeURIComponent`; fake mode seeds both tabs from fixtures.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #3
 - **Flags:** --reviewers full --start-cmd "npm run dev:fake" --url http://127.0.0.1:5173
 - **Produces:** `shared/src/{sheet,ids}.ts`, `server/src/connectors/sheets.ts`, `server/src/util/retry.ts`, `server/src/fakes/sheets.ts`, `server/src/routes/{todos,quarantine}.ts`, `web/src/pages/{Todos,Quarantine}.tsx`, tests.
 - **Done when:** unit tests cover upsert planning (existing ids → batchUpdate ranges, new ids → append, header mismatch throws, 429 then success retries) against a fake `sheets` API object; an upsert of an existing row keeps its `status` and `created_at`; a row with `extraction_status = pending` round-trips through `upsertRows`/`readRows`; `ensureTab` creates a missing tab with the pinned header; a test asserts `TODO_HEADER` imported by server `is` the shared constant, and a type-level test fails typecheck when a header column has no `Todo` field; `PATCH /api/todos/:id` with an unknown id returns 404 with no sheet write, and a WhatsApp-format todo id containing `@`, `:` and `#` round-trips; `GET /api/quarantine` returns the seeded fixture rows; the Playwright smoke marks a fixture to-do done and sees it disappear under hide-done and reappear under show-all, and opens /quarantine and sees a seeded row with its reason and scores.
@@ -442,7 +442,7 @@ multi-phase progress page is not required.
 ### Step 3: Jev classifier + Claude extractor seams
 - **Problem:** Implement `ai/jev.ts` (`TypeSafeClient.systemOne` with four noul questions + criteria, state as a JSON object, thresholds from settings, `RateLimitError` backoff, `jev.concurrency`, 30 s per-call timeout, result shape `{phishing, malicious, spam, action}`; service-level errors vs non-retryable per-message 4xx distinguished as typed errors, §4), `ai/extract.ts` (the one `claude -p` seam per §5: stdin prompt, `--tools "" --model <settings.extract.model> --output-format json --no-session-persistence --strict-mcp-config --disable-slash-commands`, never the bare-mode flag, neutral temp cwd, injected binary path, timeout + Windows/POSIX tree kill, untrusted-data wrapping with delimiter escaping, parser that reads the envelope `.result` field then the JSON array inside it, `[]` → `none`, 0–3 actions), routing function `decide(message, scores, thresholds) → {quarantined, actionable, reason}`, and `FakeJev`/`FakeClaude`. Before coding, run `claude -p --tools "" --model claude-haiku-5-5 --output-format json --no-session-persistence --strict-mcp-config --disable-slash-commands` once on the actionable fixture and save the envelope verbatim to `server/fixtures/claude-json-envelope.json`. Envelope recording order (D34): write the synthetic actionable fixture first, then record one live `claude -p` envelope from it into `server/fixtures/claude-json-envelope.json`; if the live call fails (CLI unauthenticated, rate- or spend-limited), hand-author the envelope from the documented fields (`type`, `subtype`, `is_error`, `result`), add `"synthesized": true`, and continue — M2's doctor probe re-validates against the real CLI. Never halt the build on this.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #4
 - **Flags:** --reviewers deep
 - **Produces:** `server/src/ai/{jev,extract,decide}.ts`, `server/src/fakes/{jev,claude}.ts`, fixtures with one clean, one phishing, one actionable message, `server/fixtures/claude-json-envelope.json`, tests.
 - **Done when:** unit tests assert the exact request body sent to `systemOne` (four `noul` questions, `model: "jev-latest"`, state object never contains instruction text); `decide` quarantines at `>= 0.5` on any security score and never marks a quarantined message actionable; the extractor test spawns a stub executable (via the injected binary path) that emits the recorded envelope, verifies argv contains `--tools ""`, the pinned `--model`, `--output-format json`, `--no-session-persistence`, `--strict-mcp-config` and `--disable-slash-commands` and does NOT contain the bare-mode flag (an explicit negative argv assertion), that the prompt arrived on stdin, and that the parser returns the actions from the envelope's `.result`; a `[]` result yields `none`; empty/non-JSON/`is_error: true` output yields `pending` instead of throwing; a body containing `</message>` plus an instruction still yields a prompt with exactly one closing delimiter; a timeout test proves the child is killed.
@@ -452,7 +452,7 @@ multi-phase progress page is not required.
 ### Step 4: Gmail read-only connector
 - **Problem:** Implement `connectors/gmail.ts` with the pinned `SCOPES` tuple, `yarvis gmail:auth` (desktop OAuth loopback flow writing `private/gmail-token.json`, never printing the token), load-time refusal of a token whose recorded `scope` string is not exactly the readonly scope, `fetchSince(since, knownIds)` with the INBOX query (`after:<epoch of max(settings.since, lastRunAt − 24 h)> -in:spam -in:trash`, `labelIds:["INBOX"]`, pagination), `messages.get` skipped for ids already cached, bounded concurrency 4, 429/500/503 retry/backoff (the `util/retry.ts` helper from Step 2, D29), 30 s per-call timeout, MIME → `Message` normalization (text/plain preferred, HTML stripped with `html-to-text`, 4000-char cap, link extraction, Gmail deep link), and `FakeGmail` seeded from JSON fixtures shaped like `users.messages.get` responses.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #5
 - **Flags:** --reviewers deep
 - **Produces:** `server/src/connectors/gmail.ts`, `server/src/cli.ts` (gmail:auth), `server/src/fakes/gmail.ts`, fixtures, tests.
 - **Done when:** a test asserts `SCOPES` deep-equals `["https://www.googleapis.com/auth/gmail.readonly"]` exactly; a token fixture with an extra scope is refused with a clear error; normalization tests cover multipart, HTML-only, and non-UTF-8 bodies; the query string for since `2026-10-01` (no cursor) and for a `lastRunAt` cursor (24 h overlap) is asserted verbatim; a cached id causes no `messages.get` call; a 429-then-success `messages.get` is retried and succeeds.
@@ -462,7 +462,7 @@ multi-phase progress page is not required.
 ### Step 5: WhatsApp on-demand read-only connector
 - **Problem:** Implement `connectors/whatsapp.ts`: `linkDevice()` (QR printed via `qrcode-terminal` from `connection.update.qr`, creds saved on `creds.update`; on a `restartRequired` close it re-creates the socket once and reports `linked as Yarvis` on `connection: "open"`), `listChats()` (names + JIDs from `messaging-history.set` chats/contacts, printed for the allowlist), `drain({allowlist, sinceTs})` (collect `messaging-history.set` and `messages.upsert` messages, filter by `key.remoteJid` ∈ allowlist and `messageTimestamp >= sinceTs − 24 h` (id dedup downstream gives exactly-once; first-run `sinceTs` = `settings.since`), text from `conversation`/`extendedTextMessage.text`, quiet-window 8 s / max 60 s, then close; a `loggedOut` close throws typed `WaLoggedOut` ("re-run `yarvis wa:link`"), any other close ends the drain with what was collected), socket options pinned (`markOnlineOnConnect:false`, `syncFullHistory:false`), CLI `wa:link [--reset]`/`wa:chats` (both take `private/refresh.lock`, D19), `FakeWhatsApp`. Before coding, read the installed `node_modules/@whiskeysockets/baileys/lib/Types/Events.d.ts` and the `DisconnectReason` enum, and quote the event payload fields in code comments.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #6
 - **Flags:** --reviewers deep
 - **Produces:** `server/src/connectors/whatsapp.ts`, `server/src/lock.ts`, `server/src/fakes/whatsapp.ts`, `server/src/cli.ts` (wa:link, wa:chats), tests incl. `test/readonly-guard.test.ts`.
 - **Done when:** the read-only grep test fails on a planted `sendMessage` reference and passes on the tree; `drain` tests drive a fake event emitter with history-set + upsert payloads and assert allowlist filtering, since filtering, ID format `wa:<jid>:<id>`, and that the socket is closed after the quiet window; a backlog event older than `lastMessageTs` (within the overlap) with a new id is kept; fake-emitter tests show `restartRequired` re-creates the socket once and `loggedOut` raises `WaLoggedOut`; `lock.ts` tests: a held lock refuses a second acquirer, a dead-pid lock is reclaimed; the exported module type has no member whose name starts with `send`.
@@ -472,7 +472,7 @@ multi-phase progress page is not required.
 ### Step 6: Refresh pipeline + Refresh UI
 - **Problem:** Implement `pipeline/refresh.ts` (`runRefresh(deps)` with stages whatsapp → gmail → jev → extract → sheets; work sets by pipeline state (§4, D17); JSONL cache with dedup and the §3.3 load rules; decisions cache of raw scores with `decide()` recomputed from current thresholds every run and `released_at` on released Quarantine rows (D16); pending-extraction retry first; `[]` → `none`; `sheetSyncedAt` markers; `private/state.json` cursors; the §4 stage failure policy incl. `partial`, per-message Jev rejection and the 15 min job ceiling (D20); the cross-process `private/refresh.lock` from Step 5 (D19)), the job runner (`POST /api/refresh` 202/409, `GET /api/refresh/status`, todos read-cache invalidated on job completion), Refresh button with stage progress and per-stage error text on the Todos page, the `yarvis refresh` CLI verb, fake-mode wiring of all five seams, and `server/fixtures/manifest.ts` with the expected fake-mode totals.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #7
 - **Flags:** --reviewers full --start-cmd "npm run dev:fake" --url http://127.0.0.1:5173
 - **Produces:** `server/src/pipeline/*`, `server/src/routes/refresh.ts`, `server/src/cli.ts` (refresh), `server/fixtures/manifest.ts`, Refresh UI in `web/src/pages/Todos.tsx`, tests.
 - **Done when:** an integration test calls the production `runRefresh` with all fakes and asserts: one phishing fixture lands in Quarantine and never reaches `FakeClaude` (call log empty for its id), one actionable fixture produces a Todo row whose `action` came from `FakeClaude`, totals equal `manifest.ts`, a second run makes zero Jev/Claude calls (decisions cache) and zero duplicate rows; a `FakeJev` that throws makes the job end `error` at stage `jev` with no sheet writes and cursors unchanged, and a second run with a healthy `FakeJev` (FakeWhatsApp returning nothing new) classifies and writes those same messages exactly once; the same recovery holds after `FakeSheets` fails past its retries; a `FakeJev` that rejects one message lets the others reach the sheet while the rejected one never reaches `FakeClaude`; a `FakeWhatsApp` that throws still lets Gmail fixtures reach the sheet and the job ends `partial` with a whatsapp stage error; a `FakeClaude` that fails then succeeds leaves the row `extraction_status = pending` after run 1 and filled after run 2, and a fixture to-do marked `done` before run 2 keeps `status = done` and its `created_at`; a `[]` extraction yields `none` and zero Claude calls on the next run; raising `thresholds.quarantine` and re-running releases a quarantined fixture (`released_at` set, row kept) with zero Jev calls; cursors advance after a successful run; loader tests cover a torn trailing JSONL line and a pending decision superseded by a done record; a second `POST /api/refresh` while running returns 409, and a second `runRefresh` while `private/refresh.lock` is held refuses with no writes; the Playwright smoke clicks Refresh in fake mode and sees the new to-do appear with its source chip.
@@ -482,7 +482,7 @@ multi-phase progress page is not required.
 ### Step 7: Status route, Connected apps page, yarvis doctor
 - **Problem:** Implement `GET /api/status` (configured flags from files/env; `lastSuccessAt`/`lastError` from the last refresh's stages, e.g. `relink required` on `WaLoggedOut`; no live probes), the Connected apps page (one card per seam: gmail, whatsapp, sheets, jev, claude), and `yarvis doctor` per the §5 `doctor.ts` contract (live probe per configured seam, `ok | not configured | error` lines, exit non-zero only on `error`, never prints a value from `private/`, final `cursors:` line) (D24).
 - **Type:** code
-- **Issue:** #
+- **Issue:** #8
 - **Flags:** --reviewers full --start-cmd "npm run dev:fake" --url http://127.0.0.1:5173
 - **Produces:** `server/src/routes/status.ts`, `server/src/doctor.ts`, `server/src/cli.ts` (doctor), `web/src/pages/ConnectedApps.tsx`, tests.
 - **Done when:** a doctor test against all fakes asserts one `ok` line per seam (claude line reads `parsed N actions`, jev line names the echoed model id) plus the `cursors:` line, and exit 0; against an empty `YARVIS_PRIVATE_DIR` every seam prints `not configured` and exit is 0; a fake seam that throws prints `error <reason>` and exit is non-zero; a planted fake token string never appears in doctor output; `GET /api/status` returns all five seam keys and reflects a `WaLoggedOut` stage error as `lastError`; the Playwright smoke opens /apps and sees five cards.
@@ -492,7 +492,7 @@ multi-phase progress page is not required.
 ### Step 8: Fake-mode smoke gate + CI
 - **Problem:** Add `npm run smoke` (starts the server in fake mode on a free port, POSTs `/api/refresh` with `X-Yarvis: 1`, polls status to `done` within 30 s, asserts the Todo/Quarantine counts imported from `server/fixtures/manifest.ts` via the API, exits non-zero otherwise) and `.github/workflows/ci.yml` running `npm ci`, `npx playwright install --with-deps chromium`, `npm run setup`, typecheck, lint, build, test, e2e, smoke, and the private-folder leak check on Ubuntu; README quickstart matching §10 (incl. `npx playwright install chromium`) and the §8 recovery commands.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #15
 - **Flags:** --reviewers code
 - **Produces:** `server/scripts/smoke.ts`, `.github/workflows/ci.yml`, `README.md`.
 - **Done when:** `npm run smoke` passes locally on a free (non-8787) port, its POST/poll requests passing the D22/D28 Host guard; a Vitest test parses `.github/workflows/ci.yml`, asserts every `npm run <x>` it references exists in root `package.json` scripts and that the Playwright install and private-folder leak check steps are present; a test asserts `README.md` contains each §10 command.
@@ -506,7 +506,7 @@ multi-phase progress page is not required.
 - **Problem:** Create the Google credentials and sheet, mint a readonly Gmail token, and prove gmail + sheets seams with doctor.
 - **Type:** operator
 - **Source step:** Step 4 (Gmail), Step 2 (Sheets), Step 7 (doctor)
-- **Issue:** #
+- **Issue:** #9
 - **Commands:**
   ```powershell
   # In Google Cloud Console (browser): create project "yarvis", enable Gmail API + Google Sheets API,
@@ -529,7 +529,7 @@ multi-phase progress page is not required.
 - **Problem:** Install the TypeSafe key and prove the live Jev and Claude seams with doctor.
 - **Type:** operator
 - **Source step:** Step 3, Step 7 (doctor)
-- **Issue:** #
+- **Issue:** #10
 - **Commands:**
   ```powershell
   # Get a key at https://console.typesafe.ai/ and put TYPESAFE_API_KEY=... in private\.env
@@ -547,7 +547,7 @@ multi-phase progress page is not required.
 - **Problem:** Link Yarvis as a WhatsApp device and choose the allowlisted chats without marking anything read.
 - **Type:** operator
 - **Source step:** Step 5
-- **Issue:** #
+- **Issue:** #11
 - **Commands:**
   ```powershell
   Set-Location C:\Users\abero\dev\yarvis
@@ -568,7 +568,7 @@ multi-phase progress page is not required.
 - **Problem:** Prove the full refresh against real Gmail/WhatsApp/Jev/Claude/Sheets with no write to either source.
 - **Type:** operator
 - **Source step:** Step 6
-- **Issue:** #
+- **Issue:** #12
 - **Commands:**
   ```powershell
   Set-Location C:\Users\abero\dev\yarvis
@@ -589,7 +589,7 @@ multi-phase progress page is not required.
 - **Problem:** Observe backlog, idempotency, failure recovery and token expiry over ~48 h of real use and triage findings.
 - **Type:** operator
 - **Source step:** Step 6, Step 7
-- **Issue:** #
+- **Issue:** #13
 - **Commands:**
   ```powershell
   # Over ~48 hours: click Refresh ~10 times at varied intervals, including once after >24 h with the app closed.
@@ -614,7 +614,7 @@ multi-phase progress page is not required.
 - **Problem:** Confirm the public repo tracks no private data or secrets and CI is green.
 - **Type:** operator
 - **Source step:** Step 8
-- **Issue:** #
+- **Issue:** #14
 - **Commands:**
   ```powershell
   Set-Location C:\Users\abero\dev\yarvis
