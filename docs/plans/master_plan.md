@@ -471,6 +471,7 @@ multi-phase progress page is not required.
 - **Produces:** `server/src/connectors/whatsapp.ts`, `server/src/lock.ts`, `server/src/fakes/whatsapp.ts`, `server/src/cli.ts` (wa:link, wa:chats), tests incl. `test/readonly-guard.test.ts`.
 - **Done when:** the read-only grep test fails on a planted `sendMessage` reference and passes on the tree; `drain` tests drive a fake event emitter with history-set + upsert payloads and assert allowlist filtering, since filtering, ID format `wa:<jid>:<id>`, and that the socket is closed after the quiet window; a backlog event older than `lastMessageTs` (within the overlap) with a new id is kept; fake-emitter tests show `restartRequired` re-creates the socket once and `loggedOut` raises `WaLoggedOut`; `lock.ts` tests: a held lock refuses a second acquirer, a dead-pid lock is reclaimed; the exported module type has no member whose name starts with `send`.
 - **Depends on:** 1
+- **Status:** BLOCKED (2026-10-19)
 
 <!-- autofix-applied: 2026-10-19 -->
 ### Step 6: Refresh pipeline + Refresh UI
