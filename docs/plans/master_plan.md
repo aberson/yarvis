@@ -438,6 +438,7 @@ multi-phase progress page is not required.
 - **Produces:** `shared/src/{sheet,ids}.ts`, `server/src/connectors/sheets.ts`, `server/src/util/retry.ts`, `server/src/fakes/sheets.ts`, `server/src/routes/{todos,quarantine}.ts`, `web/src/pages/{Todos,Quarantine}.tsx`, tests.
 - **Done when:** unit tests cover upsert planning (existing ids → batchUpdate ranges, new ids → append, header mismatch throws, 429 then success retries) against a fake `sheets` API object; an upsert of an existing row keeps its `status` and `created_at`; a row with `extraction_status = pending` round-trips through `upsertRows`/`readRows`; `ensureTab` creates a missing tab with the pinned header; a test asserts `TODO_HEADER` imported by server `is` the shared constant, and a type-level test fails typecheck when a header column has no `Todo` field; `PATCH /api/todos/:id` with an unknown id returns 404 with no sheet write, and a WhatsApp-format todo id containing `@`, `:` and `#` round-trips; `GET /api/quarantine` returns the seeded fixture rows; the Playwright smoke marks a fixture to-do done and sees it disappear under hide-done and reappear under show-all, and opens /quarantine and sees a seeded row with its reason and scores.
 - **Depends on:** 1
+- **Status:** DONE (2026-10-19)
 
 <!-- autofix-applied: 2026-10-19 -->
 ### Step 3: Jev classifier + Claude extractor seams

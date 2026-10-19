@@ -9,6 +9,8 @@ const STATUS: Record<ApiErrorCode, number> = {
   not_found: 404,
   bad_request: 400,
   settings_invalid: 500,
+  sheets_not_configured: 503,
+  sheets_error: 502,
   internal: 500,
 };
 

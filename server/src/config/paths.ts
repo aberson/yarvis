@@ -16,6 +16,8 @@ export interface Paths {
   /** Tracked repo-root template; the read-only fallback when settings.json is absent. */
   settingsExample: string;
   envFile: string;
+  /** Google service-account key for the Sheets writer (D6). Never read by any log/print path. */
+  serviceAccountFile: string;
   stateFile: string;
   cacheDir: string;
   lockFile: string;
@@ -40,6 +42,7 @@ export function resolvePaths(env: Env = process.env, repoRoot: string = REPO_ROO
     settingsFile: path.join(privateDir, "settings.json"),
     settingsExample: path.join(repoRoot, "settings.example.json"),
     envFile: path.join(privateDir, ".env"),
+    serviceAccountFile: path.join(privateDir, "service-account.json"),
     stateFile: path.join(privateDir, "state.json"),
     cacheDir: path.join(privateDir, "cache"),
     lockFile: path.join(privateDir, "refresh.lock"),

@@ -66,3 +66,84 @@ dl {
 dd {
   margin: 0;
 }
+.toolbar {
+  margin-bottom: 12px;
+}
+.chip {
+  display: inline-block;
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.chip-gmail {
+  background: #fde2e1;
+  color: #8a1c14;
+}
+.chip-whatsapp {
+  background: #dcf5e3;
+  color: #14532d;
+}
+.tag {
+  font-size: 12px;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #e8eaef;
+  color: #3d4555;
+}
+.todos {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.todo {
+  padding: 8px 0;
+  border-bottom: 1px solid #e3e6eb;
+}
+.todo-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.todo.done .todo-action {
+  text-decoration: line-through;
+  color: #5b6475;
+}
+.todo-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 13px;
+  margin: 4px 0 0 28px;
+}
+.table-wrap {
+  overflow-x: auto;
+}
+table.quarantine {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+table.quarantine th,
+table.quarantine td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid #e3e6eb;
+  vertical-align: top;
+}
+table.quarantine .reason {
+  min-width: 8em;
+  overflow-wrap: anywhere;
+}
+table.quarantine .link {
+  white-space: nowrap;
+}
+table.quarantine .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+table.quarantine tr.released {
+  color: #5b6475;
+}

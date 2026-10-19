@@ -1,0 +1,123 @@
+{
+  "Todos": [
+    {
+      "id": "gmail:18f3c2a9b1e4d7f0#1",
+      "source": "gmail",
+      "status": "open",
+      "action": "Pay the school trip fee by Friday",
+      "extraction_status": "done",
+      "original_text": "Hi parents, the museum trip fee of $12 is due this Friday. Please pay through the office.",
+      "sender": "office@school.example.com",
+      "context": "Museum trip fee due Friday",
+      "message_date": "2026-10-14T08:12:00.000Z",
+      "link": "https://mail.google.com/mail/u/0/#all/18f3c2a9b1e4d7f0",
+      "jev_action": 0.91,
+      "created_at": "2026-10-14T09:00:00.000Z",
+      "updated_at": "2026-10-14T09:00:00.000Z"
+    },
+    {
+      "id": "gmail:18f3c2a9b1e4d7f1#1",
+      "source": "gmail",
+      "status": "open",
+      "action": "Confirm Saturday's dentist appointment with Dana",
+      "extraction_status": "done",
+      "original_text": "Can you confirm the 10:30 slot on Saturday? Reply yes or no. - Dana",
+      "sender": "dana@clinic.example.com",
+      "context": "Appointment confirmation",
+      "message_date": "2026-10-15T16:40:00.000Z",
+      "link": "https://mail.google.com/mail/u/0/#all/18f3c2a9b1e4d7f1",
+      "jev_action": 0.84,
+      "created_at": "2026-10-15T17:00:00.000Z",
+      "updated_at": "2026-10-15T17:00:00.000Z"
+    },
+    {
+      "id": "wa:15555550123@s.whatsapp.net:3EB0A1C2D3E4F5#1",
+      "source": "whatsapp",
+      "status": "open",
+      "action": "Send Sam the grocery list before 6pm",
+      "extraction_status": "done",
+      "original_text": "send me the grocery list before 6 pls",
+      "sender": "Sam",
+      "context": "Family",
+      "message_date": "2026-10-16T12:05:00.000Z",
+      "link": "",
+      "jev_action": 0.88,
+      "created_at": "2026-10-16T12:30:00.000Z",
+      "updated_at": "2026-10-16T12:30:00.000Z"
+    },
+    {
+      "id": "wa:15555550124@s.whatsapp.net:3EB0B2C3D4E5F6#1",
+      "source": "whatsapp",
+      "status": "open",
+      "action": "can someone grab milk on the way home?",
+      "extraction_status": "pending",
+      "original_text": "can someone grab milk on the way home?",
+      "sender": "Alex",
+      "context": "Household",
+      "message_date": "2026-10-17T18:20:00.000Z",
+      "link": "",
+      "jev_action": 0.73,
+      "created_at": "2026-10-17T18:30:00.000Z",
+      "updated_at": "2026-10-17T18:30:00.000Z"
+    },
+    {
+      "id": "gmail:18f3c2a9b1e4d7f2#1",
+      "source": "gmail",
+      "status": "done",
+      "action": "Renew the two library books",
+      "extraction_status": "done",
+      "original_text": "Two items on your card are due on 2026-10-12. Renew online to avoid fines.",
+      "sender": "notices@library.example.com",
+      "context": "Items due soon",
+      "message_date": "2026-10-09T07:00:00.000Z",
+      "link": "https://mail.google.com/mail/u/0/#all/18f3c2a9b1e4d7f2",
+      "jev_action": 0.79,
+      "created_at": "2026-10-09T07:30:00.000Z",
+      "updated_at": "2026-10-11T20:00:00.000Z"
+    }
+  ],
+  "Quarantine": [
+    {
+      "id": "gmail:28a4d3b0c2f5e8a1",
+      "source": "gmail",
+      "sender": "security@account-verify.example.com",
+      "context": "Urgent: verify your account within 24 hours",
+      "message_date": "2026-10-13T03:14:00.000Z",
+      "link": "https://mail.google.com/mail/u/0/#all/28a4d3b0c2f5e8a1",
+      "jev_phishing": 0.97,
+      "jev_malicious": 0.88,
+      "jev_spam": 0.62,
+      "reason": "phishing≥0.50,malicious≥0.50,spam≥0.50",
+      "created_at": "2026-10-13T04:00:00.000Z",
+      "released_at": ""
+    },
+    {
+      "id": "gmail:28a4d3b0c2f5e8a2",
+      "source": "gmail",
+      "sender": "deals@promo.example.com",
+      "context": "50% off everything, today only",
+      "message_date": "2026-10-15T10:00:00.000Z",
+      "link": "https://mail.google.com/mail/u/0/#all/28a4d3b0c2f5e8a2",
+      "jev_phishing": 0.08,
+      "jev_malicious": 0.05,
+      "jev_spam": 0.93,
+      "reason": "spam≥0.50",
+      "created_at": "2026-10-15T11:00:00.000Z",
+      "released_at": ""
+    },
+    {
+      "id": "wa:15555550125@s.whatsapp.net:3EB0C3D4E5F6A7",
+      "source": "whatsapp",
+      "sender": "15555550125@s.whatsapp.net",
+      "context": "Unknown number",
+      "message_date": "2026-10-16T21:45:00.000Z",
+      "link": "",
+      "jev_phishing": null,
+      "jev_malicious": null,
+      "jev_spam": null,
+      "reason": "jev_error",
+      "created_at": "2026-10-17T08:00:00.000Z",
+      "released_at": ""
+    }
+  ]
+}

@@ -1,11 +1,13 @@
 // App shell: nav (Todos, Quarantine, Connected apps, Settings — D12) + routes (plan §5).
-// Todos / Quarantine / Connected apps are built by later steps; until then they say so plainly.
+// Connected apps is built by a later step (Step 7); until then it says so plainly.
 import { useCallback, useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes } from "react-router";
 import type { Settings, SettingsResponse } from "@yarvis/shared";
 import { api } from "./api.js";
 import { PirateContext, usePirate, type StringKey } from "./i18n/strings.js";
+import { QuarantinePage } from "./pages/Quarantine.js";
 import { SettingsPage } from "./pages/Settings.js";
+import { TodosPage } from "./pages/Todos.js";
 
 const NAV: ReadonlyArray<{ to: string; label: StringKey; testId: string }> = [
   { to: "/todos", label: "navTodos", testId: "nav-todos" },
@@ -57,8 +59,8 @@ function Shell({
         )}
         <Routes>
           <Route path="/" element={<Navigate to="/todos" replace />} />
-          <Route path="/todos" element={<NotBuiltYet title="navTodos" />} />
-          <Route path="/quarantine" element={<NotBuiltYet title="navQuarantine" />} />
+          <Route path="/todos" element={<TodosPage settings={settings} />} />
+          <Route path="/quarantine" element={<QuarantinePage />} />
           <Route path="/apps" element={<NotBuiltYet title="navApps" />} />
           <Route
             path="/settings"

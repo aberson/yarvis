@@ -5,9 +5,13 @@ import {
   X_YARVIS_VALUE,
   type ApiErrorBody,
   type HealthResponse,
+  type QuarantineItem,
   type Settings,
   type SettingsPatch,
   type SettingsResponse,
+  type Todo,
+  type TodoFilter,
+  type TodoPatch,
 } from "@yarvis/shared";
 
 export class ApiError extends Error {
@@ -56,4 +60,9 @@ export const api = {
   health: () => request<HealthResponse>("GET", "/api/health"),
   getSettings: () => request<SettingsResponse>("GET", "/api/settings"),
   patchSettings: (patch: SettingsPatch) => request<Settings>("PATCH", "/api/settings", patch),
+  getTodos: (status: TodoFilter = "open") =>
+    request<Todo[]>("GET", `/api/todos?status=${encodeURIComponent(status)}`),
+  patchTodo: (id: string, patch: TodoPatch) =>
+    request<Todo>("PATCH", `/api/todos/${pathId(id)}`, patch),
+  getQuarantine: () => request<QuarantineItem[]>("GET", "/api/quarantine"),
 };

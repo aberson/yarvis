@@ -12,10 +12,19 @@ import { accessLog, type AccessLogSink } from "./access-log.js";
 import { sendError } from "./http.js";
 import { healthRouter } from "./routes/health.js";
 import { settingsRouter } from "./routes/settings.js";
+import { TodosCache, todosRouter } from "./routes/todos.js";
+import { quarantineRouter } from "./routes/quarantine.js";
+import {
+  createSheetsStore,
+  googleSheetsTarget,
+  SheetsError,
+  type SheetsStore,
+} from "./connectors/sheets.js";
+import { createFakeSheets } from "./fakes/sheets.js";
 
 export interface AppDeps {
   paths: Paths;
-  /** YARVIS_FAKE=1: every external seam is wired to an in-memory fake (later steps). */
+  /** YARVIS_FAKE=1: every external seam is wired to an in-memory fake (Sheets: FakeSheets). */
   fake: boolean;
   /** The web port the Host guard also accepts (YARVIS_WEB_PORT, default 5173). */
   webPort: number;
@@ -24,6 +33,14 @@ export interface AppDeps {
    * except under Vitest (VITEST set) where it is silent so test output stays clean.
    */
   accessLog?: AccessLogSink | false;
+  /**
+   * The Sheets store behind /api/todos and /api/quarantine. Defaults to FakeSheets seeded from
+   * server/fixtures in fake mode, else the real service-account client (settings.sheetId).
+   */
+  sheets?: SheetsStore;
+  /** Todos read cache TTL (default 10 s) and clock, injectable for tests. */
+  todosCacheTtlMs?: number;
+  now?: () => number;
 }
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -75,11 +92,28 @@ const errorHandler: ErrorRequestHandler = (err: unknown, _req, res, next) => {
     sendError(res, "settings_invalid", err.message);
     return;
   }
+  if (err instanceof SheetsError) {
+    sendError(
+      res,
+      err.kind === "not_configured" ? "sheets_not_configured" : "sheets_error",
+      err.message,
+    );
+    return;
+  }
   console.error("[yarvis] unhandled error:", err instanceof Error ? err.message : String(err));
   sendError(res, "internal", "internal server error");
 };
 
+export function defaultSheetsStore(deps: Pick<AppDeps, "paths" | "fake">): SheetsStore {
+  return deps.fake
+    ? createFakeSheets().store
+    : createSheetsStore({ target: googleSheetsTarget(deps.paths) });
+}
+
 export function createApp(deps: AppDeps): express.Express {
+  const sheets = deps.sheets ?? defaultSheetsStore(deps);
+  const now = deps.now ?? Date.now;
+  const todosCache = new TodosCache(sheets, deps.todosCacheTtlMs, now);
   const app = express();
   app.disable("x-powered-by");
   const sink = deps.accessLog ?? (process.env.VITEST ? false : (line: string) => console.log(line));
@@ -88,6 +122,10 @@ export function createApp(deps: AppDeps): express.Express {
   app.use(express.json({ limit: "64kb" }));
   app.use(healthRouter({ fake: deps.fake }));
   app.use(settingsRouter({ paths: deps.paths }));
+  app.use(
+    todosRouter({ store: sheets, cache: todosCache, nowIso: () => new Date(now()).toISOString() }),
+  );
+  app.use(quarantineRouter({ store: sheets }));
   app.use((_req, res) => {
     sendError(res, "not_found");
   });
