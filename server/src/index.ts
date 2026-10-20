@@ -6,7 +6,7 @@
 // No CORS middleware: the web app reaches the API through the Vite /api proxy (D31).
 import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 import { X_YARVIS_VALUE } from "@yarvis/shared";
-import type { Paths } from "./config/paths.js";
+import type { Env, Paths } from "./config/paths.js";
 import { SettingsError } from "./config/settings.js";
 import { accessLog, type AccessLogSink } from "./access-log.js";
 import { sendError } from "./http.js";
@@ -15,6 +15,7 @@ import { settingsRouter } from "./routes/settings.js";
 import { TodosCache, todosRouter } from "./routes/todos.js";
 import { quarantineRouter } from "./routes/quarantine.js";
 import { refreshRouter } from "./routes/refresh.js";
+import { statusRouter } from "./routes/status.js";
 import { SheetsError, type SheetsStore } from "./connectors/sheets.js";
 import { createFakeSheets } from "./fakes/sheets.js";
 import { RefreshRunner } from "./pipeline/job.js";
@@ -46,6 +47,8 @@ export interface AppDeps {
   seams?: PipelineSeams;
   /** The refresh job runner; default one built over `seams`. */
   refreshRunner?: RefreshRunner;
+  /** Environment GET /api/status reads (TYPESAFE_API_KEY, PATH); default process.env. */
+  env?: Env;
 }
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -138,6 +141,14 @@ export function createApp(deps: AppDeps): express.Express {
   );
   app.use(quarantineRouter({ store: sheets }));
   app.use(refreshRouter({ runner: refresh }));
+  app.use(
+    statusRouter({
+      paths: deps.paths,
+      env: deps.env ?? process.env,
+      fake: deps.fake,
+      runner: refresh,
+    }),
+  );
   app.use((_req, res) => {
     sendError(res, "not_found");
   });

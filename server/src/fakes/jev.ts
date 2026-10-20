@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { JEV_SCORE_KEYS, type JevScores, type Message } from "@yarvis/shared";
-import { JevMessageRejected, JevServiceError, type Jev } from "../ai/jev.js";
+import { JevMessageRejected, JevServiceError, type JevWithModel } from "../ai/jev.js";
 import { FIXTURES_DIR } from "./sheets.js";
 
 export const JEV_SCORES_FILE = path.join(FIXTURES_DIR, "jev-scores.json");
@@ -59,7 +59,10 @@ export function loadFixtureMessages(
   return raw as Record<FixtureRole, Message>;
 }
 
-export class FakeJev implements Jev {
+/** The model id FakeJev echoes (the real API echoes the model it ran, e.g. for `yarvis doctor`). */
+export const FAKE_JEV_MODEL = "fake-jev";
+
+export class FakeJev implements JevWithModel {
   /** Every message passed to `classify`, in call order. */
   readonly calls: Message[] = [];
   private outage: string | undefined;
@@ -85,5 +88,9 @@ export class FakeJev implements Jev {
       );
     }
     return Promise.resolve({ ...(entry ?? FAKE_DEFAULT_SCORES) });
+  }
+
+  async classifyWithModel(message: Message): Promise<{ scores: JevScores; model?: string }> {
+    return { scores: await this.classify(message), model: FAKE_JEV_MODEL };
   }
 }

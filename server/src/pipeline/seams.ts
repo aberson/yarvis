@@ -9,7 +9,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { Settings } from "@yarvis/shared";
 import { createExtractorFromSettings, type Extractor } from "../ai/extract.js";
-import { createJevFromSettings, type Jev } from "../ai/jev.js";
+import { createJevFromSettings, type Jev, type JevWithModel } from "../ai/jev.js";
 import { resolvePaths, type Paths } from "../config/paths.js";
 import { createGmailConnector, googleGmailApi, type GmailConnector } from "../connectors/gmail.js";
 import { createSheetsStore, googleSheetsTarget, type SheetsStore } from "../connectors/sheets.js";
@@ -44,6 +44,14 @@ export interface PipelineSeams {
   sheets: SheetsStore;
 }
 
+/**
+ * The seams with a Jev that echoes its model id: what `yarvis doctor` probes (plan §5) and what both
+ * wirings below provide. A refresh only needs the PipelineSeams part.
+ */
+export interface ProbeSeams extends PipelineSeams {
+  jev: JevWithModel | ((settings: Settings) => JevWithModel);
+}
+
 /** Baileys keeps the link in `<authDir>/creds.json` (useMultiFileAuthState). */
 export const WA_CREDS_FILE = "creds.json";
 
@@ -66,7 +74,7 @@ export function realSheetsStore(paths: Paths): SheetsStore {
 }
 
 /** Production wiring. `sheets` is shared with the /api/todos routes. */
-export function createRealSeams(paths: Paths, sheets: SheetsStore): PipelineSeams {
+export function createRealSeams(paths: Paths, sheets: SheetsStore): ProbeSeams {
   return {
     wa: linkedBaileysDeps,
     gmail: createGmailConnector({ api: googleGmailApi(paths) }),
@@ -88,7 +96,7 @@ export interface FakeSeamsOptions {
   waWindow?: WaWindow;
 }
 
-export interface FakeSeams extends PipelineSeams {
+export interface FakeSeams extends ProbeSeams {
   jev: FakeJev;
   extractor: FakeClaude;
   fakes: {

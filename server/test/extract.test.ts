@@ -7,11 +7,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  buildClaudeArgs,
   buildExtractPrompt,
   claudeChildEnv,
+  claudeSpawnCommand,
   ClaudeExtractor,
   createExtractorFromSettings,
   escapeUntrusted,
+  findClaudeBinary,
   interpretRun,
   KILL_GRACE_MS,
   killProcessTree,
@@ -20,6 +23,7 @@ import {
   PROMPT_BODY_CHARS,
   parseActionsText,
   parseClaudeOutput,
+  quoteForCmd,
   resolveClaudeBinary,
   runClaude,
   type ExtractInput,
@@ -59,6 +63,15 @@ interface Capture {
   argv: string[];
   stdin: string;
   cwd: string;
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readCapture(): Capture {
@@ -401,21 +414,119 @@ describe("prompt construction (untrusted data)", () => {
 });
 
 describe("argv, binary resolution, child env", () => {
-  it("resolves claude.exe / claude from PATH, else the bare name", () => {
-    const bin = path.join(dir, "bin");
-    const exe = path.join(bin, "claude.exe");
-    const posix = path.join(bin, "claude");
-    mkdirSync(bin, { recursive: true });
+  it("finds claude.exe, else claude.cmd (PATHEXT order) on Windows, claude on POSIX; null when missing", () => {
+    const exeDir = path.join(dir, "exe");
+    const cmdDir = path.join(dir, "cmd");
+    mkdirSync(exeDir, { recursive: true });
+    mkdirSync(cmdDir, { recursive: true });
+    const exe = path.join(exeDir, "claude.exe");
+    const cmd = path.join(cmdDir, "claude.cmd");
     writeFileSync(exe, "");
-    writeFileSync(posix, "");
-    expect(resolveClaudeBinary({ Path: `C:\\nowhere;${bin}` }, "win32")).toBe(exe);
-    // A Windows path cannot be expressed in a POSIX PATH (drive-letter colon), so only on POSIX.
-    if (process.platform !== "win32") {
-      expect(resolveClaudeBinary({ PATH: `/nowhere:${bin}` }, "linux")).toBe(posix);
-    }
+    writeFileSync(cmd, "");
+    writeFileSync(path.join(cmdDir, "claude"), ""); // npm's POSIX sh shim: not runnable on Windows
+
+    expect(findClaudeBinary({ Path: `C:\nowhere;${cmdDir}` }, "win32")).toBe(cmd);
+    expect(findClaudeBinary({ Path: `${cmdDir};${exeDir}` }, "win32")).toBe(cmd); // PATH order first
+    writeFileSync(path.join(cmdDir, "claude.exe"), "");
+    // Within one directory, PATHEXT order: .EXE before .CMD by default, and as listed when set.
+    expect(findClaudeBinary({ Path: cmdDir }, "win32")).toBe(path.join(cmdDir, "claude.exe"));
+    expect(findClaudeBinary({ Path: cmdDir, PATHEXT: ".CMD;.EXE" }, "win32")).toBe(cmd);
+    expect(findClaudeBinary({ Path: `C:\nowhere;${exeDir}` }, "win32")).toBe(exe);
+    expect(findClaudeBinary({ Path: path.join(dir, "missing") }, "win32")).toBeNull();
+    expect(findClaudeBinary({}, "win32")).toBeNull();
     expect(resolveClaudeBinary({ PATH: "" }, "win32")).toBe("claude.exe");
     expect(resolveClaudeBinary({}, "linux")).toBe("claude");
+    // A Windows path cannot be expressed in a POSIX PATH (drive-letter colon), so only on POSIX.
+    if (process.platform !== "win32") {
+      expect(findClaudeBinary({ PATH: `/nowhere:${cmdDir}` }, "linux")).toBe(
+        path.join(cmdDir, "claude"),
+      );
+      expect(findClaudeBinary({ PATH: `/nowhere:${exeDir}` }, "linux")).toBeNull();
+    }
   });
+
+  it("a .cmd shim runs via cmd.exe /d /s /c with every fixed argument quoted; an .exe directly", () => {
+    const args = buildClaudeArgs("claude-haiku-5-5");
+    const shim = String.raw`C:\Program Files (x86)\npm\claude.cmd`;
+    const viaCmd = claudeSpawnCommand(shim, args, "win32", {
+      ComSpec: String.raw`C:\Windows\system32\cmd.exe`,
+    });
+    expect(viaCmd).toEqual({
+      file: String.raw`C:\Windows\system32\cmd.exe`,
+      args: [
+        "/d",
+        "/s",
+        "/c",
+        `""${shim}" "-p" "--tools" "" "--model" "claude-haiku-5-5" "--output-format" "json" "--no-session-persistence" "--strict-mcp-config" "--disable-slash-commands""`,
+      ],
+      windowsVerbatimArguments: true,
+    });
+    expect(viaCmd.args.join(" ")).not.toContain("--bare");
+    const exe = String.raw`C:\bin\claude.exe`;
+    expect(claudeSpawnCommand(exe, args, "win32")).toEqual({
+      file: exe,
+      args,
+      windowsVerbatimArguments: false,
+    });
+    expect(claudeSpawnCommand("/usr/bin/claude.cmd", args, "linux").file).toBe(
+      "/usr/bin/claude.cmd",
+    );
+    // Anything cmd.exe could still expand or unquote is refused, never passed.
+    for (const bad of ["100%", 'a"b', "a!b", "a\nb", "dir\\"]) {
+      expect(() => quoteForCmd(bad)).toThrow("argument cannot be passed safely through cmd.exe");
+    }
+  });
+
+  it.runIf(process.platform === "win32")(
+    "runs a claude.cmd shim end to end: the fixed argv (no --bare) survives cmd.exe, prompt on stdin",
+    async () => {
+      const shim = path.join(dir, "claude.cmd");
+      writeFileSync(shim, `@"${process.execPath}" "${STUB}" %*\r\n`);
+      const result = await new ClaudeExtractor({
+        binary: shim,
+        model: "claude-haiku-5-5",
+        timeoutMs: 20_000,
+        env: {
+          ...process.env,
+          STUB_CAPTURE: path.join(dir, "capture.json"),
+          STUB_STDOUT: fakeEnvelope('["Do it"]'),
+        },
+      }).extract(actionable);
+      const cap = readCapture();
+      expect(cap.argv).toEqual(buildClaudeArgs("claude-haiku-5-5"));
+      expect(cap.argv).toContain("");
+      expect(cap.argv).not.toContain("--bare");
+      expect(cap.stdin).toBe(buildExtractPrompt(actionable));
+      expect(result).toEqual({ status: "done", actions: ["Do it"] });
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "a timed-out claude.cmd run kills cmd.exe's whole tree (stub and grandchild)",
+    { timeout: 30_000 },
+    async () => {
+      const shim = path.join(dir, "claude.cmd");
+      writeFileSync(shim, `@"${process.execPath}" "${STUB}" %*\r\n`);
+      const r = await new ClaudeExtractor({
+        binary: shim,
+        model: "claude-haiku-5-5",
+        timeoutMs: 2_000,
+        env: { ...process.env, STUB_MODE: "hang", STUB_CAPTURE: path.join(dir, "capture.json") },
+      }).extract(actionable);
+      expect(r).toMatchObject({ status: "pending" });
+      const cap = JSON.parse(readFileSync(path.join(dir, "capture.json"), "utf8")) as {
+        pid: number;
+        grandchildPid: number;
+      };
+      const deadline = Date.now() + 10_000;
+      while ([cap.pid, cap.grandchildPid].some(isAlive) && Date.now() < deadline) {
+        await new Promise((res) => setTimeout(res, 100));
+      }
+      const survivors = [cap.pid, cap.grandchildPid].filter(isAlive);
+      for (const pid of survivors) process.kill(pid, "SIGKILL"); // never leak from a failing run
+      expect(survivors).toEqual([]);
+    },
+  );
 
   it("the child env drops nested-session markers but keeps the rest (OAuth store lookup)", () => {
     const env = claudeChildEnv({ CLAUDECODE: "1", CLAUDE_CODE_ENTRYPOINT: "cli", HOME: "/h" });

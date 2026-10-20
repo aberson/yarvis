@@ -708,6 +708,11 @@ export interface GmailConnector {
     knownIds: ReadonlySet<string>,
     opts?: { signal?: AbortSignal },
   ): Promise<GmailFetchResult>;
+  /**
+   * `yarvis doctor`'s live check (§5): ONE INBOX `messages.list` with maxResults 1 (a read; the
+   * listed id is discarded). Resolving the API re-runs the recorded-scope check in real mode.
+   */
+  probe(): Promise<void>;
 }
 
 export interface GmailConnectorOptions {
@@ -832,6 +837,12 @@ export function createGmailConnector(opts: GmailConnectorOptions): GmailConnecto
         signal,
       );
       return { messages, listed: ids.length, skippedCached: ids.length - fresh.length };
+    },
+
+    async probe() {
+      const api = await resolveApi();
+      const params: ListParams = { userId: "me", q: "", labelIds: ["INBOX"], maxResults: 1 };
+      await call("messages.list", (o) => api.users.messages.list(params, o));
     },
   };
 }

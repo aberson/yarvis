@@ -81,3 +81,9 @@ export const jevRejectedText = (n: number): string =>
   `jev rejected ${n} message${n === 1 ? "" : "s"}`;
 export const extractionPendingText = (n: number): string =>
   `extraction pending for ${n} message${n === 1 ? "" : "s"} (retried next refresh)`;
+
+/** `yarvis doctor` probe outcomes that are not thrown errors (plan §5, D24). */
+export const JEV_PROBE_MISMATCH =
+  "jev scores off (phishing fixture below thresholds.quarantine, or clean fixture quarantined)";
+export const CLAUDE_PROBE_PENDING = "claude extraction failed (check claude -p login)";
+export const CLAUDE_PROBE_NO_ACTIONS = "claude parsed 0 actions";

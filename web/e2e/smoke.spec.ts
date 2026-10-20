@@ -3,9 +3,11 @@
 // and swaps back. Step 6: clicking Refresh runs the fake-mode pipeline (all five fakes) and the new
 // to-do appears with its source chip; the Todos tab then holds the manifest total. A stubbed
 // status sequence (running -> partial) shows a failed stage's error text and polling stopping.
+// Step 7: Connected apps (/apps) renders one card per seam.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
+import { SEAMS } from "@yarvis/shared";
 import { EXPECTED } from "../../server/fixtures/manifest.js";
 import { en, pirate, type Strings } from "../src/i18n/strings.js";
 import { REFRESH_POLL_MS } from "../src/refresh-poll.js";
@@ -151,4 +153,51 @@ test("Refresh runs the fake pipeline and the new to-do appears with its source c
 
   await page.getByTestId("hide-done-toggle").click();
   await expect(page.getByTestId("todo-row")).toHaveCount(EXPECTED.todos);
+});
+
+test("Connected apps shows one card per seam from GET /api/status", async ({ page }) => {
+  await page.goto("/apps");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(en.navApps);
+  const cards = page.getByTestId("app-card");
+  await expect(cards).toHaveCount(5);
+  for (const seam of SEAMS) {
+    const card = page.locator(`[data-testid="app-card"][data-seam="${seam}"]`);
+    // Fake mode wires every seam to its fake, so each one is configured.
+    await expect(card.getByTestId("app-configured")).toHaveText(en.appsConfigured);
+  }
+});
+
+test("Connected apps renders a not-configured card and a card with its last error", async ({
+  page,
+}) => {
+  const WA_ERROR = "relink required (run yarvis wa:link --reset)";
+  const LAST_OK = "2026-10-19T18:02:14.000Z";
+  await page.route("**/api/status", (route) =>
+    route.fulfill({
+      json: {
+        gmail: { configured: false },
+        whatsapp: { configured: true, lastSuccessAt: LAST_OK, lastError: WA_ERROR },
+        sheets: { configured: true, lastSuccessAt: LAST_OK },
+        jev: { configured: true, lastSuccessAt: LAST_OK },
+        claude: { configured: true, lastSuccessAt: LAST_OK },
+      },
+    }),
+  );
+  await page.goto("/apps");
+  await expect(page.getByTestId("app-card")).toHaveCount(5);
+
+  const gmail = page.locator('[data-testid="app-card"][data-seam="gmail"]');
+  await expect(gmail).toHaveAttribute("data-configured", "false");
+  await expect(gmail.getByTestId("app-configured")).toHaveText(en.appsNotConfigured);
+  await expect(gmail.getByTestId("app-last-success")).toHaveText(en.appsNever);
+  await expect(gmail.getByTestId("app-last-error")).toHaveText(en.appsNone);
+
+  const whatsapp = page.locator('[data-testid="app-card"][data-seam="whatsapp"]');
+  await expect(whatsapp.getByTestId("app-configured")).toHaveText(en.appsConfigured);
+  await expect(whatsapp.getByTestId("app-last-error")).toHaveText(WA_ERROR);
+  await expect(whatsapp.getByTestId("app-last-error")).toHaveClass(/error/);
+  await expect(whatsapp.getByTestId("app-last-success")).not.toHaveText(en.appsNever);
+
+  // Only the whatsapp card carries an error.
+  await expect(page.locator('[data-testid="app-last-error"].error')).toHaveCount(1);
 });

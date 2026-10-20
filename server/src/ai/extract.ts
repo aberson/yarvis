@@ -4,7 +4,8 @@
 // Isolation (keeps subscription OAuth, inherits nothing from the operator's global config):
 //   claude -p --tools "" --model <settings.extract.model> --output-format json
 //          --no-session-persistence --strict-mcp-config --disable-slash-commands
-//   - the prompt goes on STDIN, never argv; spawned without a shell;
+//   - the prompt goes on STDIN, never argv; spawned without a shell (a Windows claude.cmd runs via
+//     `cmd.exe /d /s /c` with each fixed argument individually quoted, see claudeSpawnCommand);
 //   - run from a fresh, neutral temp cwd (removed afterwards);
 //   - NEVER the bare-mode flag: it restricts auth to ANTHROPIC_API_KEY and never reads OAuth;
 //   - timeout + WHOLE-PROCESS-TREE kill (taskkill /T /F on Windows; detached process group +
@@ -118,30 +119,111 @@ export function buildClaudeArgs(model: string): string[] {
   return args;
 }
 
+function envVar(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const key = Object.keys(env).find((k) => k.toUpperCase() === name);
+  return key ? env[key] : undefined;
+}
+
 function envPath(env: NodeJS.ProcessEnv): string {
-  const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH");
-  return (key ? env[key] : undefined) ?? "";
+  return envVar(env, "PATH") ?? "";
 }
 
 /**
- * Default binary: the first `claude.exe` (Windows) / `claude` (POSIX) on PATH. Falls back to the
- * bare name (spawn then fails with ENOENT -> pending). Never a .cmd shim: no shell is used.
+ * Windows extensions the seam can launch: `.exe` directly, `.cmd` / `.bat` (the npm-installed CLI
+ * is `claude.cmd`) through cmd.exe with a fixed, individually quoted argv (claudeSpawnCommand).
+ */
+const WIN_LAUNCHABLE: readonly string[] = [".EXE", ".CMD", ".BAT"];
+
+/** The launchable extensions in PATHEXT order (Windows' own search order). */
+function windowsExtensions(env: NodeJS.ProcessEnv): string[] {
+  const listed = (envVar(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .map((e) => e.trim().toUpperCase())
+    .filter((e) => WIN_LAUNCHABLE.includes(e));
+  return listed.length > 0 ? listed : [...WIN_LAUNCHABLE];
+}
+
+/**
+ * Default binary: the first claude on PATH (findClaudeBinary). Falls back to the bare name (spawn
+ * then fails with ENOENT -> pending).
  */
 export function resolveClaudeBinary(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const name = platform === "win32" ? "claude.exe" : "claude";
+  return findClaudeBinary(env, platform) ?? (platform === "win32" ? "claude.exe" : "claude");
+}
+
+/**
+ * The first claude on PATH, or null when there is none (the claude seam is then "not configured"
+ * in GET /api/status and `yarvis doctor`). POSIX: `claude`. Windows: `claude.exe`, `claude.cmd` or
+ * `claude.bat`, per directory in PATHEXT order (the extensionless `claude` npm also writes there is
+ * a POSIX shell script Windows cannot run).
+ */
+export function findClaudeBinary(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  const names =
+    platform === "win32"
+      ? windowsExtensions(env).map((ext) => `claude${ext.toLowerCase()}`)
+      : ["claude"];
   for (const dir of envPath(env).split(platform === "win32" ? ";" : ":")) {
     if (!dir.trim()) continue;
-    const candidate = path.join(dir.trim().replace(/^"(.*)"$/, "$1"), name);
-    try {
-      if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
-    } catch {
-      // unreadable PATH entry: skip
+    for (const name of names) {
+      const candidate = path.join(dir.trim().replace(/^"(.*)"$/, "$1"), name);
+      try {
+        if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
+      } catch {
+        // unreadable PATH entry: skip
+      }
     }
   }
-  return name;
+  return null;
+}
+
+export interface SpawnCommand {
+  file: string;
+  args: string[];
+  /** Windows: pass `args` to CreateProcess as written (cmd.exe parses its own command line). */
+  windowsVerbatimArguments: boolean;
+}
+
+/**
+ * Quotes one argument for a cmd.exe command line. Inside double quotes cmd treats `&|<>^()` as
+ * literal; `%` (and `!` under delayed expansion) still expand, a `"` would end the quoting, and a
+ * trailing backslash would escape the closing quote for the program's own parser, so all of those
+ * are refused. The seam's argv is fixed (buildClaudeArgs, validated model) and the prompt is on
+ * stdin, so no message content ever reaches this.
+ */
+export function quoteForCmd(arg: string): string {
+  if (/["%!\r\n\0]/.test(arg) || arg.endsWith("\\")) {
+    throw new Error("argument cannot be passed safely through cmd.exe");
+  }
+  return `"${arg}"`;
+}
+
+/**
+ * How to start `binary args`: directly (no shell) for an executable; on Windows a `.cmd` / `.bat`
+ * (Node refuses to spawn those without a shell) runs as `cmd.exe /d /s /c ""bin" "arg" ..."` with
+ * every argument individually quoted (quoteForCmd). `/d` skips AutoRun commands. The tree kill
+ * (taskkill /T) covers cmd.exe and the CLI it starts.
+ */
+export function claudeSpawnCommand(
+  binary: string,
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): SpawnCommand {
+  if (platform === "win32" && /\.(cmd|bat)$/i.test(binary)) {
+    const line = [binary, ...args].map(quoteForCmd).join(" ");
+    return {
+      file: envVar(env, "COMSPEC") ?? "cmd.exe",
+      args: ["/d", "/s", "/c", `"${line}"`],
+      windowsVerbatimArguments: true,
+    };
+  }
+  return { file: binary, args: [...args], windowsVerbatimArguments: false };
 }
 
 /**
@@ -283,11 +365,13 @@ function spawnOnce(
     }
     let child: ChildProcess;
     try {
-      child = spawn(binary, args, {
+      const command = claudeSpawnCommand(binary, args);
+      child = spawn(command.file, command.args, {
         cwd: o.cwd,
         env: o.env,
         stdio: ["pipe", "pipe", "pipe"],
         shell: false,
+        windowsVerbatimArguments: command.windowsVerbatimArguments,
         windowsHide: true,
         detached: process.platform !== "win32",
       });

@@ -11,6 +11,7 @@ import {
   type Settings,
   type SettingsPatch,
   type SettingsResponse,
+  type StatusResponse,
   type Todo,
   type TodoFilter,
   type TodoPatch,
@@ -78,4 +79,5 @@ export const api = {
     }
   },
   getRefreshStatus: () => request<RefreshStatus>("GET", "/api/refresh/status"),
+  getStatus: () => request<StatusResponse>("GET", "/api/status"),
 };

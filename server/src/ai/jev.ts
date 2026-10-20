@@ -206,6 +206,14 @@ export interface Jev {
   classify(message: Message): Promise<JevScores>;
 }
 
+/**
+ * A Jev that also reports the model id the API echoed (the `yarvis doctor` jev detail, §5);
+ * `model` is undefined when the response did not echo one.
+ */
+export interface JevWithModel extends Jev {
+  classifyWithModel(message: Message): Promise<{ scores: JevScores; model?: string }>;
+}
+
 export interface JevClassifierOptions {
   /** settings.jev.model (e.g. "jev-latest"). */
   model: string;
@@ -216,7 +224,7 @@ export interface JevClassifierOptions {
 }
 
 /** The real classifier: one systemOne call per message under retry/backoff + timeout. */
-export class JevClassifier implements Jev {
+export class JevClassifier implements JevWithModel {
   private readonly model: string;
   private readonly timeoutMs: number;
   private readonly retry: Omit<RetryOptions, "isRetryable">;
@@ -240,8 +248,8 @@ export class JevClassifier implements Jev {
     return this.api;
   }
 
-  /** Scores plus the model id the API echoed (doctor's detail, §5). */
-  async classifyWithModel(message: Message): Promise<{ scores: JevScores; model: string }> {
+  /** Scores plus the model id the API echoed, if any (doctor's detail, §5). */
+  async classifyWithModel(message: Message): Promise<{ scores: JevScores; model?: string }> {
     try {
       const api = this.getApi();
       const request = buildJevRequest(message, this.model);
@@ -250,7 +258,7 @@ export class JevClassifier implements Jev {
         { ...this.retry, timeoutMs: this.timeoutMs },
       );
       const scores = parseJevAnswers(response);
-      return { scores, model: typeof response.model === "string" ? response.model : this.model };
+      return typeof response.model === "string" ? { scores, model: response.model } : { scores };
     } catch (err) {
       throw toJevError(err);
     }

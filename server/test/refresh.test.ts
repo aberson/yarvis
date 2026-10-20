@@ -371,6 +371,7 @@ describe("runRefresh with all fakes", () => {
     const gate = new Promise<void>((resolve) => (open = resolve));
     // An in-flight fetch that ignores cancellation and still delivers messages afterwards.
     const lateGmail: GmailConnector = {
+      ...fake.gmail,
       fetchSince: async (cursor, known) => {
         entered = true;
         await gate;

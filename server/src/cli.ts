@@ -1,9 +1,8 @@
 // `yarvis` verb dispatcher (plan §5): `npm run yarvis -- <verb>`. Verbs are thin wrappers over the
-// server modules; each lands with its own step, and until then it exits non-zero with
-// "not yet implemented". Built so far: gmail:auth (Step 4), wa:link and wa:chats (Step 5),
-// refresh (Step 6).
+// server modules: gmail:auth (Step 4), wa:link and wa:chats (Step 5), refresh (Step 6), doctor
+// (Step 7). A verb registered without `run` exits non-zero with "not yet implemented".
 import { loadPrivateEnv } from "./config/env.js";
-import { resolvePaths, type Paths } from "./config/paths.js";
+import { resolvePaths, type Env, type Paths } from "./config/paths.js";
 import {
   createGoogleOAuthClient,
   GmailError,
@@ -12,7 +11,7 @@ import {
   type GmailAuthDeps,
 } from "./connectors/gmail.js";
 import type { WaDeps } from "./connectors/whatsapp.js";
-import type { PipelineSeams } from "./pipeline/seams.js";
+import type { ProbeSeams } from "./pipeline/seams.js";
 import { isMainModule } from "./util/is-main.js";
 
 export interface Verb {
@@ -39,10 +38,17 @@ export interface CliDeps {
    */
   wa?: WaDeps;
   /**
-   * `refresh` seams. Unset by default: refresh-cli.ts wires the real clients (all five fakes when
-   * YARVIS_FAKE=1) lazily, so other verbs never load them.
+   * `refresh` and `doctor` seams. Unset by default: refresh-cli.ts / doctor.ts wire the real clients
+   * (all five fakes when YARVIS_FAKE=1) lazily, so other verbs never load them. One type serves
+   * both: both wirings (createRealSeams, createFakeSeams) already provide doctor's model-echoing
+   * Jev, and refresh only reads the PipelineSeams part.
    */
-  seams?: PipelineSeams;
+  seams?: ProbeSeams;
+  /**
+   * Environment `doctor` reads (YARVIS_FAKE, TYPESAFE_API_KEY, PATH for the claude binary);
+   * default process.env (after cli.ts loaded <privateDir>/.env).
+   */
+  env?: Env;
 }
 
 export function defaultCliDeps(): CliDeps {
@@ -94,6 +100,7 @@ export const VERBS: readonly Verb[] = [
     name: "doctor",
     usage: "doctor",
     summary: "Probe each configured seam (status only, never private values)",
+    run: async (args, io, deps) => (await import("./doctor.js")).runDoctorVerb(args, io, deps),
   },
   {
     name: "refresh",

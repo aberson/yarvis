@@ -206,3 +206,21 @@ export interface RefreshConflict {
 /** Header every mutating request must carry (D22). */
 export const X_YARVIS_HEADER = "X-Yarvis";
 export const X_YARVIS_VALUE = "1";
+
+/** The five external seams (plan §5), in Connected apps / `yarvis doctor` order. */
+export const SEAMS = ["gmail", "whatsapp", "sheets", "jev", "claude"] as const;
+export type Seam = (typeof SEAMS)[number];
+
+/**
+ * One seam in `GET /api/status` (plan §6). `configured` comes from files present / env set only
+ * (no live probe; that is `yarvis doctor`). `lastSuccessAt` (ISO 8601 UTC) and `lastError` (a fixed
+ * content-free phrase from server/src/pipeline/errors.ts) come from the refresh jobs' stages.
+ */
+export interface SeamStatus {
+  configured: boolean;
+  lastSuccessAt?: string;
+  lastError?: string;
+}
+
+/** `GET /api/status` response. */
+export type StatusResponse = Record<Seam, SeamStatus>;

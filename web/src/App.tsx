@@ -1,10 +1,10 @@
 // App shell: nav (Todos, Quarantine, Connected apps, Settings — D12) + routes (plan §5).
-// Connected apps is built by a later step (Step 7); until then it says so plainly.
 import { useCallback, useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes } from "react-router";
 import type { Settings, SettingsResponse } from "@yarvis/shared";
 import { api } from "./api.js";
 import { PirateContext, usePirate, type StringKey } from "./i18n/strings.js";
+import { ConnectedAppsPage } from "./pages/ConnectedApps.js";
 import { QuarantinePage } from "./pages/Quarantine.js";
 import { SettingsPage } from "./pages/Settings.js";
 import { TodosPage } from "./pages/Todos.js";
@@ -15,16 +15,6 @@ const NAV: ReadonlyArray<{ to: string; label: StringKey; testId: string }> = [
   { to: "/apps", label: "navApps", testId: "nav-apps" },
   { to: "/settings", label: "navSettings", testId: "nav-settings" },
 ];
-
-function NotBuiltYet({ title }: { title: StringKey }) {
-  const t = usePirate();
-  return (
-    <section>
-      <h1>{t[title]}</h1>
-      <p className="muted">{t.notBuiltYet}</p>
-    </section>
-  );
-}
 
 function Shell({
   settings,
@@ -61,7 +51,7 @@ function Shell({
           <Route path="/" element={<Navigate to="/todos" replace />} />
           <Route path="/todos" element={<TodosPage settings={settings} />} />
           <Route path="/quarantine" element={<QuarantinePage />} />
-          <Route path="/apps" element={<NotBuiltYet title="navApps" />} />
+          <Route path="/apps" element={<ConnectedAppsPage />} />
           <Route
             path="/settings"
             element={<SettingsPage settings={settings} onChange={onSettingsChange} />}

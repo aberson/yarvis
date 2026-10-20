@@ -493,6 +493,7 @@ multi-phase progress page is not required.
 - **Produces:** `server/src/routes/status.ts`, `server/src/doctor.ts`, `server/src/cli.ts` (doctor), `web/src/pages/ConnectedApps.tsx`, tests.
 - **Done when:** a doctor test against all fakes asserts one `ok` line per seam (claude line reads `parsed N actions`, jev line names the echoed model id) plus the `cursors:` line, and exit 0; against an empty `YARVIS_PRIVATE_DIR` every seam prints `not configured` and exit is 0; a fake seam that throws prints `error <reason>` and exit is non-zero; a planted fake token string never appears in doctor output; `GET /api/status` returns all five seam keys and reflects a `WaLoggedOut` stage error as `lastError`; the Playwright smoke opens /apps and sees five cards.
 - **Depends on:** 6
+- **Status:** DONE (2026-10-19)
 
 <!-- autofix-applied: 2026-10-19 -->
 ### Step 8: Fake-mode smoke gate + CI
