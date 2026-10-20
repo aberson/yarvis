@@ -16,6 +16,7 @@
 import {
   parseTodoId,
   REFRESH_STAGES,
+  sinceEpochMs,
   todoId,
   type JevScores,
   type Message,
@@ -203,9 +204,11 @@ class JobTracker {
 const isJevError = (outcome: unknown): outcome is JevErrorRecord =>
   typeof (outcome as Partial<JevErrorRecord> | null)?.error === "string";
 
-/** Epoch seconds of `settings.since` read as 00:00:00Z (§3.3). */
+/** Epoch seconds of `settings.since` (§3.3, D38; validated at settings load). */
 export function sinceEpochSeconds(since: string): number {
-  return Math.floor(Date.parse(`${since}T00:00:00Z`) / 1000);
+  const ms = sinceEpochMs(since);
+  if (ms === null) throw new RangeError(`settings.since is not a valid day or instant: ${since}`);
+  return Math.floor(ms / 1000);
 }
 
 function resolveSeam<T extends object>(seam: T | ((s: Settings) => T), settings: Settings): T {

@@ -253,6 +253,16 @@ describe("query (§3.3: since read as 00:00:00Z; cursor overlaps 24 h)", () => {
     },
   );
 
+  it("floors at an exact UTC instant since (D38)", () => {
+    expect(afterEpoch({ since: "2026-10-20T22:40:00Z" })).toBe(
+      Date.UTC(2026, 9, 20, 22, 40) / 1000,
+    );
+    // The 24 h overlap never reaches below the instant.
+    expect(
+      afterEpoch({ since: "2026-10-20T22:40:00Z", lastRunAt: "2026-10-20T23:00:00.000Z" }),
+    ).toBe(Date.UTC(2026, 9, 20, 22, 40) / 1000);
+  });
+
   it("accepts a real leap day 2028-02-29", () => {
     expect(afterEpoch({ since: "2028-02-29" })).toBe(Date.parse("2028-02-29T00:00:00Z") / 1000);
     expect(gmailQuery({ since: "2028-02-29" })).toBe("after:1835395200 -in:spam -in:trash");

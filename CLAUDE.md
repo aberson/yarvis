@@ -88,8 +88,11 @@ system of record, upserted by `id`.
 **Status**: `GET /api/status` reports configured flags (files/env only, no live probes) plus the last
 refresh's per-seam success/error; `yarvis doctor` live-probes each configured seam (D24).
 
-**Web**: four routes (Todos, Quarantine, Connected apps, Settings); pirate mode swaps a string
-table only.
+**Web**: three routes (Todos, Quarantine, Controls = connections + settings + logo picker; `/apps`
+and `/settings` redirect, D40); pirate mode swaps a string table only. J.A.R.V.I.S. HUD theme tokens
+live in `web/src/styles.css`; the 10 logos in `web/src/ui/logos.tsx` (ids in `shared/src/logos.ts`).
+`settings.since` takes a day or a UTC instant, parsed only by `shared/src/since.ts` (D38). Desktop
+launcher: `scripts/launch.ps1` (shortcut via `scripts/install-shortcut.ps1`; keep both ASCII-only).
 
 ## Current state
 

@@ -248,11 +248,11 @@ generating model (Claude). That is the guardrail that matters.
   | FakeSheets | `sheet-seed.json` | `{Todos: Todo[], Quarantine: QuarantineItem[]}` |
 
 ### `web/src/`
-- `App.tsx` + routes: `/todos`, `/quarantine`, `/apps`, `/settings`.
+- `App.tsx` + routes: `/todos`, `/quarantine`, `/controls` (`/apps` and `/settings` redirect there, D40); the header shows the chosen logo + `J.A.R.V.I.S.` wordmark (`Y.A.R.V.I.S.` in pirate mode, D39).
 - `pages/Todos.tsx` — list with source tag chips, done checkbox (`PATCH /api/todos/:id`), hide-done toggle, Refresh button with stage progress and each stage's `error` text (polls `/api/refresh/status` every 2 s while running; refetches todos when the state turns terminal), "Open sheet" link.
 - `pages/Quarantine.tsx` — quarantined rows with reason + scores + link.
-- `pages/ConnectedApps.tsx` — per-connector card from `/api/status`.
-- `pages/Settings.tsx` — pirate toggle (`PATCH /api/settings {pirate}`), thresholds (read-only display), private dir path.
+- `pages/Controls.tsx` — the merged Connected apps + Settings page (D40): look and feel (pirate toggle, logo picker over the 10 `LOGO_IDS`, both `PATCH /api/settings`), connection cards (`pages/Connections.tsx`, from `/api/status`), thresholds (read-only display), private dir path.
+- `ui/logos.tsx` — one SVG per `LOGO_IDS` entry (shared/src/logos.ts is the one list); `styles.css` holds the J.A.R.V.I.S. HUD theme tokens (D41).
 - `i18n/strings.ts` — `en` and `pirate` string tables; `usePirate()` picks by `settings.pirate`. Data is never altered.
 - `api.ts` — typed fetch wrappers; path ids wrapped in `encodeURIComponent`; mutating calls send `X-Yarvis: 1`.
 
@@ -262,7 +262,7 @@ generating model (Claude). That is the guardrail that matters.
 |---|---|---|---|---|
 | GET | `/api/health` | — | `{ok:true, fake:boolean}` | |
 | GET | `/api/settings` | — | `Settings & {privateDir: string}` | the full §12.1 object (it holds no secrets) plus the resolved private dir from `config/paths.ts` |
-| PATCH | `/api/settings` | `{pirate?: boolean}` | `Settings` | only `pirate` is writable from the UI in v0 |
+| PATCH | `/api/settings` | `{pirate?: boolean, logo?: LogoId}` | `Settings` | only `pirate` and `logo` are writable from the UI (D39) |
 | GET | `/api/todos` | `?status=open\|done\|all` (default open) | `Todo[]` | reads the sheet (cached 10 s; cache invalidated by a successful PATCH and by job completion) |
 | PATCH | `/api/todos/:id` | `{status:"open"\|"done"}` | `Todo` | update-only: `:id` is `encodeURIComponent(todoId)`, decoded and validated with `shared/src/ids.ts` (400 `bad_id`); 404 if not already in the Todos tab; writes only `status` + `updated_at`, never appends |
 | GET | `/api/quarantine` | — | `QuarantineItem[]` | |
@@ -701,7 +701,8 @@ After all Automated Steps complete, the orchestrator prints: **Please run M1 nex
 
 ### 12.1 `private/settings.json` (and tracked repo-root `settings.example.json`)
 
-`since` is the first-run floor for both Gmail (P10) and WhatsApp (D21). `sheetId` is the spreadsheet
+`since` is the first-run floor for both Gmail (P10) and WhatsApp (D21): a day `YYYY-MM-DD` (00:00:00Z) or an exact UTC
+instant `YYYY-MM-DDTHH:MM[:SS]Z` (D38). `logo` is one of `LOGO_IDS` (absent = `reactor-skull`, D39). `sheetId` is the spreadsheet
 id segment of the sheet URL `https://docs.google.com/spreadsheets/d/<sheetId>/edit`; used by
 `connectors/sheets.ts` and the Todos page "Open sheet" link.
 
@@ -709,6 +710,7 @@ id segment of the sheet URL `https://docs.google.com/spreadsheets/d/<sheetId>/ed
 {
   "sheetId": "<google sheet id>",
   "pirate": false,
+  "logo": "reactor-skull",
   "since": "2026-10-01",
   "whatsapp": { "allowlist": [ { "jid": "15555550123@s.whatsapp.net", "name": "Me" } ] },
   "jev": { "model": "jev-latest", "concurrency": 2, "thresholds": { "quarantine": 0.5, "action": 0.6 } },
@@ -808,6 +810,10 @@ Invocation: `claude -p --tools "" --model claude-haiku-5-5 --output-format json 
 | D35 | D | Lock stale age 17 min (15 min ceiling + 2 min settle grace + 5 s margin); at the ceiling the job reports error immediately but keeps `refresh.lock` until the abandoned stage settles; supersedes D19's 15 min clause | proposed (build 2026-10-19) |
 | D36 | D | JSONL torn-line rule: only an unterminated final line is torn (skipped; next append truncates it); a corrupt newline-terminated line is an error; shared by loader and writer | proposed (build 2026-10-19) |
 | D37 | D | CI leak check: `private/` must track exactly `private/README.md` (any case); no tracked file that `.gitignore` excludes; TYPESAFE_API_KEY value scan (>=16 chars) and key-shape scan over all tracked files; field-name scan excludes code/fixtures/docs | proposed (build 2026-10-19) |
+| D38 | D | `settings.since` also accepts an exact UTC instant (`YYYY-MM-DDTHH:MM[:SS]Z`); one parser `sinceEpochMs` (shared/src/since.ts) used by settings validation, the Gmail cursor and the WhatsApp floor. Motivation: a clean-slate reset at M4 needed a floor of "now", and a day floor plus the 24 h cursor overlap would re-fetch the day's mail | proposed (operator polish 2026-10-20) |
+| D39 | D | Header logo: 10 HUD-ring + pirate-mark SVGs, `settings.logo` (one of `LOGO_IDS`, default `reactor-skull`), writable via `PATCH /api/settings {logo}`; wordmark `J.A.R.V.I.S.` (`Y.A.R.V.I.S.` in pirate mode) | proposed (operator polish 2026-10-20) |
+| D40 | D | Connected apps + Settings merge into one Controls page (`/controls`, pirate "The Helm"); three nav items, old routes redirect; supersedes D12's "four nav items" | proposed (operator polish 2026-10-20) |
+| D41 | D | Single dark J.A.R.V.I.S. HUD theme (navy/cyan, red + black highlights) as CSS tokens in `styles.css`; Desktop launcher `scripts/launch.ps1` + `scripts/install-shortcut.ps1` (icon `scripts/yarvis.ico`) | proposed (operator polish 2026-10-20) |
 
 ### 12.6 Reused workspace patterns (producing files read)
 

@@ -17,7 +17,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { convert as htmlToText } from "html-to-text";
 import { z } from "zod";
-import { gmailId, type Message } from "@yarvis/shared";
+import { gmailId, isSinceShape, sinceEpochMs, type Message } from "@yarvis/shared";
 import type { Paths } from "../config/paths.js";
 import { writeJsonAtomic, type AtomicFs } from "../util/atomic-write.js";
 import {
@@ -512,23 +512,20 @@ export interface GmailApi {
   };
 }
 
-/** Fetch cursor: `settings.since` (YYYY-MM-DD, read as 00:00:00Z) and `state.gmail.lastRunAt`. */
+/** Fetch cursor: `settings.since` (a day read as 00:00:00Z, or a UTC instant, D38) and `state.gmail.lastRunAt`. */
 export interface GmailCursor {
   since: string;
   lastRunAt?: string | null;
 }
 
-/** Epoch seconds of max(since 00:00:00Z, lastRunAt − 24 h) (§3.3, D21). */
+/** Epoch seconds of max(since, lastRunAt − 24 h) (§3.3, D21, D38). */
 export function afterEpoch(cursor: GmailCursor): number {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(cursor.since)) {
-    throw new RangeError("gmail cursor: since must be YYYY-MM-DD");
+  if (!isSinceShape(cursor.since)) {
+    throw new RangeError("gmail cursor: since must be YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS]Z");
   }
-  const sinceMs = Date.parse(`${cursor.since}T00:00:00Z`);
-  // Round-trip guard: Date.parse rolls impossible days over (2026-02-30 -> 2026-03-02), which
-  // would silently move the after: floor; the parsed UTC date must give back the same Y-M-D.
-  if (Number.isNaN(sinceMs) || new Date(sinceMs).toISOString().slice(0, 10) !== cursor.since) {
-    throw new RangeError("gmail cursor: since is not a real date");
-  }
+  // sinceEpochMs carries the round-trip guard (2026-02-30 must not roll over to Mar 2).
+  const sinceMs = sinceEpochMs(cursor.since);
+  if (sinceMs === null) throw new RangeError("gmail cursor: since is not a real date");
   let floorMs = sinceMs;
   if (cursor.lastRunAt) {
     const lastMs = Date.parse(cursor.lastRunAt);

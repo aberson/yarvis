@@ -1,19 +1,19 @@
-// App shell: nav (Todos, Quarantine, Connected apps, Settings — D12) + routes (plan §5).
+// App shell: logo + wordmark, nav (Todos, Quarantine, Controls — D12, D40) + routes (plan §5).
+// The old /apps and /settings routes redirect to /controls so bookmarks keep working.
 import { useCallback, useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes } from "react-router";
 import type { Settings, SettingsResponse } from "@yarvis/shared";
 import { api } from "./api.js";
 import { PirateContext, usePirate, type StringKey } from "./i18n/strings.js";
-import { ConnectedAppsPage } from "./pages/ConnectedApps.js";
+import { ControlsPage } from "./pages/Controls.js";
 import { QuarantinePage } from "./pages/Quarantine.js";
-import { SettingsPage } from "./pages/Settings.js";
 import { TodosPage } from "./pages/Todos.js";
+import { Logo } from "./ui/logos.js";
 
 const NAV: ReadonlyArray<{ to: string; label: StringKey; testId: string }> = [
   { to: "/todos", label: "navTodos", testId: "nav-todos" },
   { to: "/quarantine", label: "navQuarantine", testId: "nav-quarantine" },
-  { to: "/apps", label: "navApps", testId: "nav-apps" },
-  { to: "/settings", label: "navSettings", testId: "nav-settings" },
+  { to: "/controls", label: "navControls", testId: "nav-controls" },
 ];
 
 function Shell({
@@ -31,7 +31,10 @@ function Shell({
   return (
     <div className="app">
       <header className="header">
-        <span className="brand">{t.appName}</span>
+        <span className="brand" data-testid="brand">
+          <Logo id={settings?.logo} size={40} />
+          <span className="wordmark">{t.brand}</span>
+        </span>
         {fake && <span className="badge">{t.fakeModeBadge}</span>}
         <nav aria-label="Main">
           {NAV.map((item) => (
@@ -51,11 +54,12 @@ function Shell({
           <Route path="/" element={<Navigate to="/todos" replace />} />
           <Route path="/todos" element={<TodosPage settings={settings} />} />
           <Route path="/quarantine" element={<QuarantinePage />} />
-          <Route path="/apps" element={<ConnectedAppsPage />} />
           <Route
-            path="/settings"
-            element={<SettingsPage settings={settings} onChange={onSettingsChange} />}
+            path="/controls"
+            element={<ControlsPage settings={settings} onChange={onSettingsChange} />}
           />
+          <Route path="/apps" element={<Navigate to="/controls" replace />} />
+          <Route path="/settings" element={<Navigate to="/controls" replace />} />
           <Route path="*" element={<Navigate to="/todos" replace />} />
         </Routes>
       </main>

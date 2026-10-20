@@ -1,13 +1,14 @@
-// Step 1 smoke (fake mode): the shell renders, and the Settings pirate toggle swaps the nav labels
+// Step 1 smoke (fake mode): the shell renders, and the Controls pirate toggle swaps the nav labels
 // to the pirate table, persists across a reload (PATCH /api/settings -> private settings.json),
 // and swaps back. Step 6: clicking Refresh runs the fake-mode pipeline (all five fakes) and the new
 // to-do appears with its source chip; the Todos tab then holds the manifest total. A stubbed
 // status sequence (running -> partial) shows a failed stage's error text and polling stopping.
-// Step 7: Connected apps (/apps) renders one card per seam.
+// Step 7: the Controls page (/controls, D40; /apps and /settings redirect) renders one card per
+// seam. D39: picking a logo swaps the header logo and persists across a reload.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
-import { SEAMS } from "@yarvis/shared";
+import { DEFAULT_LOGO, SEAMS } from "@yarvis/shared";
 import { EXPECTED } from "../../server/fixtures/manifest.js";
 import { en, pirate, type Strings } from "../src/i18n/strings.js";
 import { REFRESH_POLL_MS } from "../src/refresh-poll.js";
@@ -24,18 +25,18 @@ const claudeResponses = JSON.parse(
 const NAV = [
   ["nav-todos", "navTodos"],
   ["nav-quarantine", "navQuarantine"],
-  ["nav-apps", "navApps"],
-  ["nav-settings", "navSettings"],
+  ["nav-controls", "navControls"],
 ] as const;
 
 async function expectNav(page: Page, table: Strings): Promise<void> {
   for (const [testId, key] of NAV) {
     await expect(page.getByTestId(testId)).toHaveText(table[key]);
   }
+  await expect(page.getByTestId("brand")).toHaveText(table.brand);
 }
 
 test("pirate toggle swaps nav labels to the pirate table and back", async ({ page }) => {
-  await page.goto("/settings");
+  await page.goto("/controls");
   const toggle = page.getByTestId("pirate-toggle");
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
   await expectNav(page, en);
@@ -155,9 +156,36 @@ test("Refresh runs the fake pipeline and the new to-do appears with its source c
   await expect(page.getByTestId("todo-row")).toHaveCount(EXPECTED.todos);
 });
 
-test("Connected apps shows one card per seam from GET /api/status", async ({ page }) => {
-  await page.goto("/apps");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(en.navApps);
+test("old /apps and /settings routes redirect to Controls", async ({ page }) => {
+  for (const old of ["/apps", "/settings"]) {
+    await page.goto(old);
+    await expect(page).toHaveURL(/\/controls$/);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText(en.navControls);
+  }
+});
+
+test("picking a logo swaps the header logo and persists across a reload", async ({ page }) => {
+  await page.goto("/controls");
+  const header = page.getByTestId("brand").locator("svg.logo");
+  await expect(header).toHaveAttribute("data-logo", DEFAULT_LOGO);
+  await expect(page.getByTestId("logo-choice")).toHaveCount(10);
+
+  await page.locator('[data-testid="logo-choice"][data-logo="kraken-ring"]').click();
+  await expect(header).toHaveAttribute("data-logo", "kraken-ring");
+  await expect(
+    page.locator('[data-testid="logo-choice"][data-logo="kraken-ring"]'),
+  ).toHaveAttribute("aria-checked", "true");
+
+  await page.reload();
+  await expect(header).toHaveAttribute("data-logo", "kraken-ring");
+
+  await page.locator(`[data-testid="logo-choice"][data-logo="${DEFAULT_LOGO}"]`).click();
+  await expect(header).toHaveAttribute("data-logo", DEFAULT_LOGO);
+});
+
+test("Controls shows one connection card per seam from GET /api/status", async ({ page }) => {
+  await page.goto("/controls");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(en.navControls);
   const cards = page.getByTestId("app-card");
   await expect(cards).toHaveCount(5);
   for (const seam of SEAMS) {
@@ -167,9 +195,7 @@ test("Connected apps shows one card per seam from GET /api/status", async ({ pag
   }
 });
 
-test("Connected apps renders a not-configured card and a card with its last error", async ({
-  page,
-}) => {
+test("Controls renders a not-configured card and a card with its last error", async ({ page }) => {
   const WA_ERROR = "relink required (run yarvis wa:link --reset)";
   const LAST_OK = "2026-10-19T18:02:14.000Z";
   await page.route("**/api/status", (route) =>
@@ -183,7 +209,7 @@ test("Connected apps renders a not-configured card and a card with its last erro
       },
     }),
   );
-  await page.goto("/apps");
+  await page.goto("/controls");
   await expect(page.getByTestId("app-card")).toHaveCount(5);
 
   const gmail = page.locator('[data-testid="app-card"][data-seam="gmail"]');

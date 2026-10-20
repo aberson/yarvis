@@ -1,4 +1,4 @@
-// GET/PATCH /api/settings (plan §6). Only `pirate` is writable from the UI in v0.
+// GET/PATCH /api/settings (plan §6). Only `pirate` and `logo` are writable from the UI.
 import { Router } from "express";
 import type { Settings, SettingsResponse } from "@yarvis/shared";
 import type { Paths } from "../config/paths.js";

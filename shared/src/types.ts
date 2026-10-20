@@ -2,6 +2,7 @@
 // Todo / QuarantineItem are DERIVED from the pinned header tuples in ./sheet.ts (never declared
 // separately), so a header column without a field cannot exist. RefreshStatus is the §4 job
 // status shape served by GET /api/refresh/status.
+import type { LogoId } from "./logos.js";
 import type { ExtractionStatus, QuarantineColumn, TodoColumn, TodoStatus } from "./sheet.js";
 
 export type Source = "whatsapp" | "gmail";
@@ -77,7 +78,12 @@ export interface AllowlistEntry {
 export interface Settings {
   sheetId: string;
   pirate: boolean;
-  /** `YYYY-MM-DD`, read as 00:00:00Z that day; first-run floor for Gmail and WhatsApp. */
+  /** Header logo (D39); absent in older files, read as DEFAULT_LOGO. */
+  logo: LogoId;
+  /**
+   * Fetch floor for Gmail and WhatsApp: `YYYY-MM-DD` (read as 00:00:00Z that day) or an exact UTC
+   * instant `YYYY-MM-DDTHH:MM[:SS]Z` (D38). Parsed only by `sinceEpochMs` (since.ts).
+   */
   since: string;
   whatsapp: {
     allowlist: AllowlistEntry[];
@@ -119,9 +125,10 @@ export type JevThresholds = Settings["jev"]["thresholds"];
 /** `GET /api/settings` response: the full settings object plus the resolved private dir. */
 export type SettingsResponse = Settings & { privateDir: string };
 
-/** `PATCH /api/settings` body: only `pirate` is writable from the UI in v0. */
+/** `PATCH /api/settings` body: only `pirate` and `logo` are writable from the UI. */
 export interface SettingsPatch {
   pirate?: boolean;
+  logo?: LogoId;
 }
 
 /** `GET /api/health` response. */

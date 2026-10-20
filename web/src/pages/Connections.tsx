@@ -1,6 +1,7 @@
-// Connected apps page (plan §5, §6, D24): one card per seam from GET /api/status, showing whether it
-// is configured (files / env present; no live probe) and its last refresh success and error. The
-// error text is the server's fixed phrase, shown as-is. Live checks are `yarvis doctor`.
+// Controls page, Connections section (plan §5, §6, D24, D40): one card per seam from GET
+// /api/status, showing whether it is configured (files / env present; no live probe) and its last
+// refresh success and error. The error text is the server's fixed phrase, shown as-is. Live checks
+// are `yarvis doctor`.
 import { useEffect, useState } from "react";
 import { SEAMS, type Seam, type StatusResponse } from "@yarvis/shared";
 import { api } from "../api.js";
@@ -18,7 +19,7 @@ const SEAM_LABEL: Readonly<Record<Seam, StringKey>> = {
 /** A command, not UI text: identical in every string table. */
 const DOCTOR_COMMAND = "npm run yarvis -- doctor";
 
-export function ConnectedAppsPage() {
+export function ConnectionsSection() {
   const t = usePirate();
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,8 +49,8 @@ export function ConnectedAppsPage() {
   }, []);
 
   return (
-    <section>
-      <h1>{t.navApps}</h1>
+    <section aria-labelledby="connections-title">
+      <h2 id="connections-title">{t.connectionsTitle}</h2>
       <p className="muted">
         {t.appsIntro} <code>{DOCTOR_COMMAND}</code>
       </p>
@@ -71,7 +72,7 @@ export function ConnectedAppsPage() {
                 data-seam={seam}
                 data-configured={String(s.configured)}
               >
-                <h2>{t[SEAM_LABEL[seam]]}</h2>
+                <h3>{t[SEAM_LABEL[seam]]}</h3>
                 <span
                   className={`tag ${s.configured ? "tag-ok" : "tag-off"}`}
                   data-testid="app-configured"

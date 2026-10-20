@@ -13,7 +13,7 @@ the gitignored `private/` folder) is the only write target. Quarantined messages
 generating model.
 
 > **Phase 1 complete** — issues #2–#8, #15 closed. v0 runs end to end in fake mode (refresh pipeline,
-> Todos/Quarantine/Connected apps/Settings, `yarvis doctor`, smoke gate, CI on Ubuntu). 415 tests passing,
+> Todos/Quarantine/Controls, `yarvis doctor`, smoke gate, CI on Ubuntu). 415 tests passing,
 > 0 type errors, 0 lint violations. Connecting real accounts is the manual steps M1-M6 in
 > [docs/plans/master_plan.md](docs/plans/master_plan.md).
 
@@ -77,11 +77,21 @@ npm run dev                    # the day-to-day run mode (watch)
 
 `npm run build` / `npm start` exist for CI and a non-watch run.
 
+## Desktop shortcut (Windows)
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-shortcut.ps1
+```
+
+Creates a **Yarvis** shortcut on the Desktop. Double-clicking it opens the app in the browser; if
+Yarvis is not running it first starts `npm run dev` in a minimized "Yarvis" window (close that
+window to stop it).
+
 ## Recovery
 
 | Symptom | Fix |
 |---|---|
-| WhatsApp `loggedOut` (`relink required` on the Connected apps page) | `npm run yarvis -- wa:link --reset` |
+| WhatsApp `loggedOut` (`relink required` on the Controls page) | `npm run yarvis -- wa:link --reset` |
 | Gmail token expired (Testing-mode consent lasts about 7 days) | `npm run yarvis -- gmail:auth` |
 | Suspect local cache | delete `private/cache` (the Google Sheet is the system of record and survives; the next refresh re-reads and re-screens) |
 | Stuck refresh job | it ends `error` at the 15 min ceiling, or restart the server (a dead process's `private/refresh.lock` is reclaimed) |
@@ -151,7 +161,7 @@ yarvis/
 ├── server/src/             # Express app, connectors/{gmail,whatsapp,sheets}, ai/{jev,extract,decide},
 │                           # pipeline/refresh, routes, cli, doctor, fakes
 ├── server/scripts/smoke.ts # `npm run smoke`
-├── web/src/                # React pages: Todos, Quarantine, Connected apps, Settings
+├── web/src/                # React pages: Todos, Quarantine, Controls (logo picker + connections)
 ├── private/                # GITIGNORED except private/README.md: settings, tokens, caches
 └── docs/plans/master_plan.md
 ```

@@ -1,6 +1,7 @@
 {
   "sheetId": "<google sheet id>",
   "pirate": false,
+  "logo": "reactor-skull",
   "since": "2026-10-01",
   "whatsapp": { "allowlist": [{ "jid": "15555550123@s.whatsapp.net", "name": "Me" }] },
   "jev": {

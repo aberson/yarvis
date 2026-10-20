@@ -10,14 +10,14 @@ describe("string tables", () => {
     }
   });
 
-  it("the four nav labels are the plan's in en and swapped in pirate", () => {
-    expect([en.navTodos, en.navQuarantine, en.navApps, en.navSettings]).toEqual([
+  it("the three nav labels are the plan's in en and swapped in pirate (D40)", () => {
+    expect([en.navTodos, en.navQuarantine, en.navControls]).toEqual([
       "Todos",
       "Quarantine",
-      "Connected apps",
-      "Settings",
+      "Controls",
     ]);
-    for (const key of ["navTodos", "navQuarantine", "navApps", "navSettings"] as const) {
+    expect([en.brand, pirate.brand]).toEqual(["J.A.R.V.I.S.", "Y.A.R.V.I.S."]);
+    for (const key of ["navTodos", "navQuarantine", "navControls"] as const) {
       expect(pirate[key]).not.toBe(en[key]);
     }
   });

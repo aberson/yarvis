@@ -3,24 +3,30 @@
 // creates the private file). Writes are temp-file + rename (plan §3.3).
 import { readFile, stat } from "node:fs/promises";
 import { z } from "zod";
-import type { Settings, SettingsPatch } from "@yarvis/shared";
+import {
+  DEFAULT_LOGO,
+  LOGO_IDS,
+  isSinceShape,
+  sinceEpochMs,
+  type Settings,
+  type SettingsPatch,
+} from "@yarvis/shared";
 import type { Paths } from "./paths.js";
 import { writeJsonAtomic } from "../util/atomic-write.js";
 
-const isoDay = z
+// D38: a calendar day or an exact UTC instant; sinceEpochMs (shared/src/since.ts) is the one parser.
+const since = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "must be YYYY-MM-DD")
-  .refine((s) => {
-    const d = new Date(`${s}T00:00:00Z`);
-    return !Number.isNaN(d.getTime()) && d.toISOString().startsWith(s);
-  }, "must be a real calendar date");
+  .refine(isSinceShape, "must be YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS]Z")
+  .refine((s) => sinceEpochMs(s) !== null, "must be a real calendar date and time");
 
 const probability = z.number().min(0).max(1);
 
 export const SettingsSchema = z.strictObject({
   sheetId: z.string(),
   pirate: z.boolean(),
-  since: isoDay,
+  logo: z.enum(LOGO_IDS).default(DEFAULT_LOGO),
+  since,
   whatsapp: z.strictObject({
     allowlist: z.array(z.strictObject({ jid: z.string().min(1), name: z.string() })),
   }),
@@ -37,6 +43,7 @@ export const SettingsSchema = z.strictObject({
 
 export const SettingsPatchSchema = z.strictObject({
   pirate: z.boolean().optional(),
+  logo: z.enum(LOGO_IDS).optional(),
 });
 
 // Compile-time pin: the zod schema and the shared Settings / SettingsPatch types must not drift.
@@ -128,7 +135,7 @@ export async function writeSettings(paths: Paths, settings: Settings): Promise<S
   return valid;
 }
 
-/** Thrown for a PATCH body that is not exactly `{pirate?: boolean}`. */
+/** Thrown for a PATCH body that is not exactly `{pirate?: boolean, logo?: LogoId}`. */
 export class SettingsPatchError extends Error {
   constructor(detail: string) {
     super(detail);
@@ -150,6 +157,7 @@ export function patchSettings(paths: Paths, patch: SettingsPatch): Promise<Setti
     const current = await loadSettings(paths);
     const next: Settings = { ...current };
     if (patch.pirate !== undefined) next.pirate = patch.pirate;
+    if (patch.logo !== undefined) next.logo = patch.logo;
     return writeSettings(paths, next);
   };
   const result = queue.then(run, run);

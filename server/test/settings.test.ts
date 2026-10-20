@@ -10,6 +10,7 @@ import {
   patchSettings,
   SettingsError,
 } from "../src/config/settings.js";
+import { DEFAULT_LOGO } from "@yarvis/shared";
 import { tempPaths } from "./helpers.js";
 
 const cleanups: Array<() => void> = [];
@@ -34,6 +35,7 @@ describe("settings.example.json", () => {
     const paths = fresh();
     const s = parseSettings(readJson(paths.settingsExample), paths.settingsExample);
     expect(s.pirate).toBe(false);
+    expect(s.logo).toBe(DEFAULT_LOGO);
     expect(s.jev.thresholds.quarantine).toBeLessThanOrEqual(s.jev.thresholds.action);
   });
 });
@@ -54,6 +56,9 @@ describe("parseSettings", () => {
     ["missing key", (b) => ({ ...b, pirate: undefined })],
     ["impossible since date", (b) => ({ ...b, since: "2026-13-40" })],
     ["since not a day", (b) => ({ ...b, since: "Oct 1" })],
+    ["since instant without Z", (b) => ({ ...b, since: "2026-10-20T22:40" })],
+    ["impossible since instant", (b) => ({ ...b, since: "2026-10-20T25:00Z" })],
+    ["unknown logo", (b) => ({ ...b, logo: "parrot" })],
     ["threshold out of range", (b) => ({ ...b, jev: jev(2, 2) })],
     ["non-integer concurrency", (b) => ({ ...b, jev: jev(1.5, 0.5) })],
   ])("rejects %s with a SettingsError naming the file", (_label, mutate) => {
@@ -61,11 +66,22 @@ describe("parseSettings", () => {
     expect(() => parseSettings(raw, "x/settings.json")).toThrow(SettingsError);
     expect(() => parseSettings(raw, "x/settings.json")).toThrow(/x\/settings\.json/);
   });
+
+  it("accepts an exact UTC instant for since (D38)", () => {
+    const s = parseSettings({ ...example(), since: "2026-10-20T22:40:00Z" }, "x/settings.json");
+    expect(s.since).toBe("2026-10-20T22:40:00Z");
+  });
+
+  it("reads a file without logo as DEFAULT_LOGO (D39)", () => {
+    const { logo: _omit, ...rest } = example();
+    expect(parseSettings(rest, "x/settings.json").logo).toBe(DEFAULT_LOGO);
+  });
 });
 
 describe("parseSettingsPatch", () => {
-  it("accepts {pirate:boolean} and {}", () => {
+  it("accepts {pirate:boolean}, {logo} and {}", () => {
     expect(parseSettingsPatch({ pirate: true })).toEqual({ pirate: true });
+    expect(parseSettingsPatch({ logo: "kraken-ring" })).toEqual({ logo: "kraken-ring" });
     expect(parseSettingsPatch({})).toEqual({});
   });
   // Rejections are covered once, through the production route: see the PATCH 400 it.each below.
@@ -166,8 +182,25 @@ describe("GET/PATCH /api/settings", () => {
     expect(readJson(paths.settingsFile)).toEqual(before);
   });
 
+  it("PATCH {logo} persists to private settings.json and round-trips through GET", async () => {
+    const paths = fresh({ seedSettings: true });
+    const before = readJson(paths.settingsFile) as Record<string, unknown>;
+    const app = createApp({ paths, fake: false, webPort: 5173 });
+    const res = await request(app)
+      .patch("/api/settings")
+      .set("Host", HOST)
+      .set("X-Yarvis", "1")
+      .send({ logo: "helm-wheel" });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ...before, logo: "helm-wheel" });
+    expect(readJson(paths.settingsFile)).toEqual({ ...before, logo: "helm-wheel" });
+    const get = await request(app).get("/api/settings").set("Host", HOST);
+    expect((get.body as { logo: string }).logo).toBe("helm-wheel");
+  });
+
   it.each([
     ["non-boolean pirate", { pirate: "yes" }],
+    ["unknown logo", { logo: "parrot" }],
     ["non-writable key", { sheetId: "abc" }],
     ["array body", []],
   ])("PATCH with %s returns 400 bad_request and does not write", async (_label, body) => {
