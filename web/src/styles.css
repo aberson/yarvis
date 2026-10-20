@@ -132,15 +132,18 @@ table.quarantine td {
   padding: 6px 8px;
   border-bottom: 1px solid #e3e6eb;
   vertical-align: top;
+  /* Senders and subjects are long unbreakable strings; "anywhere" (unlike break-word) also lowers
+     the cell's min-content width, so the table fits whatever fallback font the platform picks. */
+  overflow-wrap: anywhere;
 }
 table.quarantine .reason {
   min-width: 8em;
-  overflow-wrap: anywhere;
 }
 table.quarantine .link {
   white-space: nowrap;
 }
 table.quarantine .num {
+  white-space: nowrap;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
