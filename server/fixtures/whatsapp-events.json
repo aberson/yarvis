@@ -1,0 +1,70 @@
+[
+  {
+    "event": "messaging-history.set",
+    "payload": {
+      "chats": [
+        { "id": "15555550123@s.whatsapp.net", "name": "Me" },
+        { "id": "15555550100-1790000000@g.us", "name": "Family (synthetic)" },
+        { "id": "15555550199@s.whatsapp.net", "name": "Not allowlisted (synthetic)" }
+      ],
+      "contacts": [
+        { "id": "15555550142@s.whatsapp.net", "notify": "Sam (synthetic)" },
+        { "id": "15555550177@s.whatsapp.net" }
+      ],
+      "messages": [
+        {
+          "key": {
+            "remoteJid": "15555550123@s.whatsapp.net",
+            "fromMe": true,
+            "id": "3EB0FAKE000000000001"
+          },
+          "messageTimestamp": 1790900000,
+          "pushName": "Me",
+          "message": { "conversation": "Remember to renew the car registration by Friday" }
+        },
+        {
+          "key": {
+            "remoteJid": "15555550199@s.whatsapp.net",
+            "fromMe": false,
+            "id": "3EB0FAKE000000000002"
+          },
+          "messageTimestamp": 1790900100,
+          "pushName": "Not allowlisted",
+          "message": { "conversation": "Lunch tomorrow?" }
+        }
+      ],
+      "isLatest": true,
+      "progress": 100
+    }
+  },
+  {
+    "event": "messages.upsert",
+    "payload": {
+      "type": "notify",
+      "messages": [
+        {
+          "key": {
+            "remoteJid": "15555550123@s.whatsapp.net",
+            "fromMe": true,
+            "id": "3EB0FAKE000000000003"
+          },
+          "messageTimestamp": 1791000000,
+          "message": {
+            "extendedTextMessage": {
+              "text": "Book the dentist appointment: https://example.com/dentist/book"
+            }
+          }
+        },
+        {
+          "key": {
+            "remoteJid": "15555550123@s.whatsapp.net",
+            "fromMe": true,
+            "id": "3EB0FAKE000000000004"
+          },
+          "messageTimestamp": 1791000100,
+          "message": { "imageMessage": { "mimetype": "image/jpeg" } }
+        }
+      ]
+    }
+  }
+]
