@@ -26,6 +26,9 @@ function gmailText(err: GmailError): string {
       return "gmail token refused: not read-only (run yarvis gmail:auth)";
     case "token_invalid":
       return "gmail token unreadable (run yarvis gmail:auth)";
+    case "rate_limited":
+      // A per-user quota limit, not an outage: Google's own quota text is never copied.
+      return withStatus("gmail rate limited", httpStatusOf(err.cause));
     case "upstream":
       return err.cause instanceof TimeoutError
         ? "gmail timed out"

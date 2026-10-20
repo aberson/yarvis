@@ -476,20 +476,30 @@ async function runStages(deps: RefreshDeps, job: JobTracker, now: () => Date): P
     partial = true;
   }
 
-  // ---- gmail: independent source stage; messages.get only for uncached ids (D21).
+  // ---- gmail: independent source stage; messages.get only for uncached ids (D21). Fetched
+  // messages are cached as they arrive (onMessages), so a fetch that fails part-way (e.g. a
+  // rate limit that outlasts its waits) keeps them: the next run skips them via knownIds. The
+  // cursor still moves only when the whole fetch succeeded.
   job.begin("gmail");
+  let gmailCount = 0;
   try {
     const result = await deps.gmail.fetchSince(
       { since: settings.since, lastRunAt: state.gmail?.lastRunAt ?? null },
       new Set(messages.keys()),
-      { signal: job.signal },
+      {
+        signal: job.signal,
+        onMessages: async (batch) => {
+          gmailCount += await cacheMessages(batch);
+        },
+      },
     );
-    const count = await cacheMessages(result.messages);
+    // Anything the connector did not hand over incrementally (dedup makes this a no-op otherwise).
+    gmailCount += await cacheMessages(result.messages);
     next.gmail = { lastRunAt: startedAt };
-    job.done("gmail", count);
+    job.done("gmail", gmailCount);
   } catch (err) {
     if (err instanceof JobAborted) throw err;
-    job.fail("gmail", stageErrorText(err));
+    job.fail("gmail", stageErrorText(err), gmailCount);
     partial = true;
   }
 

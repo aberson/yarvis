@@ -16,6 +16,7 @@ import { QUARANTINE, TODOS } from "../src/connectors/sheets.js";
 import { DisconnectReason } from "../src/connectors/whatsapp.js";
 import { FakeClaude, loadClaudeSeed } from "../src/fakes/claude.js";
 import { FakeJev, loadJevSeed } from "../src/fakes/jev.js";
+import { createFakeGmail, FAKE_GOOGLE_ERROR_TEXT } from "../src/fakes/gmail.js";
 import { createFakeSheets, type FakeSheets } from "../src/fakes/sheets.js";
 import { OPEN_STEP, type FakeWhatsAppOptions } from "../src/fakes/whatsapp.js";
 import {
@@ -30,7 +31,7 @@ import { STAGE_TIMEOUT_ERROR } from "../src/pipeline/errors.js";
 import { runRefresh } from "../src/pipeline/refresh.js";
 import { createFakeSeams, type PipelineSeams } from "../src/pipeline/seams.js";
 import { readState } from "../src/pipeline/state.js";
-import { DEFAULT_RETRY } from "../src/util/retry.js";
+import { abortableSleep, DEFAULT_RETRY } from "../src/util/retry.js";
 import { REPO_ROOT, type Paths } from "../src/config/paths.js";
 import type { GmailConnector } from "../src/connectors/gmail.js";
 import type { SheetsStore } from "../src/connectors/sheets.js";
@@ -90,6 +91,20 @@ async function driveUntil(cond: () => boolean): Promise<void> {
 
 const readOrMissing = (file: string): string | null =>
   existsSync(file) ? readFileSync(file, "utf8") : null;
+
+/** `gmail:<hex>` -> `<hex>` (the id messages.get is called with). */
+const hexOf = (id: string): string => id.slice("gmail:".length);
+
+/** Sorted Gmail message ids in the messages cache (empty when it does not exist yet). */
+function cachedGmailIds(paths: Paths): string[] {
+  const text = readOrMissing(messagesFile(paths)) ?? "";
+  return text
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "")
+    .map((line) => (JSON.parse(line) as { id: string }).id)
+    .filter((id) => id.startsWith("gmail:"))
+    .sort();
+}
 
 /** Resolves with `p` if it settles within 10 s of REAL time (fake timers are not advanced). */
 async function settlesWithoutAdvancingTime<T>(p: Promise<T>): Promise<T> {
@@ -244,6 +259,66 @@ describe("runRefresh with all fakes", () => {
     expect(todos.some((t) => t.id === `${ACTIONABLE}#1`)).toBe(true);
     expect(todos.some((t) => t.id === `${WA_ACTIONABLE}#1`)).toBe(false);
     expect(await readState(paths)).toEqual({ gmail: { lastRunAt: status.startedAt } });
+  });
+
+  it("a Gmail rate limit that outlasts its waits keeps the messages fetched before it (cached, screened, written) without moving the Gmail cursor; the next run gets only the rest", async () => {
+    const { paths, sheets } = setup();
+    const firstGmail = createFakeGmail();
+    const first = seams(sheets, { gmail: firstGmail.connector, whatsapp: NOTHING_NEW });
+    firstGmail.api.failNext("messages.get", 403, 1_000, {
+      reason: "rateLimitExceeded",
+      id: hexOf(SPAM),
+    });
+    const status = await run(paths, first);
+    expect(status.state).toBe("partial");
+    expect(status.stages.gmail).toEqual({
+      state: "error",
+      count: 3,
+      error: "gmail rate limited (HTTP 403)",
+    });
+    expect(JSON.stringify(status)).not.toContain(FAKE_GOOGLE_ERROR_TEXT);
+    expect(cachedGmailIds(paths)).toEqual([ACTIONABLE, PHISHING, "gmail:19a0c0ffee000003"].sort());
+    expect((await readState(paths)).gmail).toBeUndefined();
+    // What was fetched went through the rest of the pipeline in the same run.
+    expect((await tabs(sheets)).todos.some((t) => t.id === `${ACTIONABLE}#1`)).toBe(true);
+
+    const secondGmail = createFakeGmail();
+    const again = await run(
+      paths,
+      seams(sheets, { gmail: secondGmail.connector, whatsapp: NOTHING_NEW }),
+    );
+    expect(again.stages.gmail).toEqual({ state: "done", count: 1 });
+    expect(
+      secondGmail.api.callsOf("messages.get").map((c) => (c.params as { id: string }).id),
+    ).toEqual([hexOf(SPAM)]);
+    expect(cachedGmailIds(paths)).toContain(SPAM);
+    expect((await readState(paths)).gmail).toEqual({ lastRunAt: again.startedAt });
+  });
+
+  it("the job ceiling during a Gmail quota wait ends the stage at once and keeps the messages fetched before the wait", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { paths, sheets } = setup();
+    // One get at a time, the real abortable wait, and a wait (Retry-After, clamp and budget raised
+    // here) that outlasts the ceiling.
+    const gmail = createFakeGmail({
+      concurrency: 1,
+      quota: { sleep: abortableSleep, maxWaitMs: 60 * 60_000, waitBudgetMs: 2 * 60 * 60_000 },
+    });
+    gmail.api.failNext("messages.get", 403, 1, {
+      reason: "rateLimitExceeded",
+      retryAfterSeconds: 3_600,
+      id: hexOf(SPAM),
+    });
+    const job = run(paths, seams(sheets, { gmail: gmail.connector, whatsapp: NOTHING_NEW }));
+    // Newest first: ...04 and ...03 are fetched, then ...02 is rate limited.
+    await driveUntil(() => cachedGmailIds(paths).length === 2);
+    await vi.advanceTimersByTimeAsync(JOB_CEILING_MS);
+
+    const status = await settlesWithoutAdvancingTime(job);
+    expect(status.stages.gmail).toMatchObject({ state: "error", error: STAGE_TIMEOUT_ERROR });
+    expect(cachedGmailIds(paths)).toEqual([PHISHING, "gmail:19a0c0ffee000003"].sort());
+    expect(gmail.api.callsOf("messages.get")).toHaveLength(3);
+    expect(existsSync(paths.stateFile)).toBe(false);
   });
 
   it("an extraction failure writes the row pending; the retry fills it while an operator 'done' and created_at survive", async () => {

@@ -53,6 +53,11 @@ const CASES: Array<[string, unknown, string]> = [
     "gmail unavailable (HTTP 500)",
   ],
   [
+    "gmail rate limit outlasting its waits",
+    new GmailError("rate_limited", RAW, { cause: httpCause(429) }),
+    "gmail rate limited (HTTP 429)",
+  ],
+  [
     "gmail timeout",
     new GmailError("upstream", RAW, { cause: new TimeoutError(30_000) }),
     "gmail timed out",

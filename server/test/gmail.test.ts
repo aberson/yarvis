@@ -3,6 +3,7 @@
 // MIME -> Message normalization (plan §1.2, §3.2, §3.3, §5, §8, D20, D21, D29).
 import { copyFileSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as realDelay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { gmailId, parseMessageId } from "@yarvis/shared";
 import {
@@ -11,10 +12,12 @@ import {
   decodeHeaderValue,
   fromAddress,
   GET_CONCURRENCY,
+  GMAIL_QUOTA,
   GMAIL_READONLY_SCOPE,
   GmailError,
   gmailQuery,
   googleGmailApi,
+  isGmailRateLimit,
   isReadonlyScope,
   loadCredentials,
   normalizeGmailMessage,
@@ -23,7 +26,14 @@ import {
   type RawMessage,
 } from "../src/connectors/gmail.js";
 import { REPO_ROOT } from "../src/config/paths.js";
-import { createFakeGmail, FakeGmailApi, loadGmailSeed, matchesQuery } from "../src/fakes/gmail.js";
+import {
+  createFakeGmail,
+  FAKE_GOOGLE_ERROR_TEXT,
+  FakeGmailApi,
+  loadGmailSeed,
+  matchesQuery,
+} from "../src/fakes/gmail.js";
+import { TimeoutError } from "../src/util/retry.js";
 import { truncateText, extractLinks, MESSAGE_TEXT_MAX_CHARS } from "../src/util/text.js";
 import { tempPaths } from "./helpers.js";
 
@@ -309,16 +319,19 @@ describe("fetchSince against FakeGmail", () => {
     expect(res.messages).toEqual([]);
   });
 
-  it("a 429-then-success messages.get is retried and succeeds", async () => {
+  it("a 429-then-success messages.get waits out the quota window (not per-call backoff) and succeeds", async () => {
     const delays: number[] = [];
+    const waits: number[] = [];
     const { api, connector } = createFakeGmail({
       retry: { sleep: (ms) => (delays.push(ms), Promise.resolve()) },
+      quota: { sleep: (ms) => (waits.push(ms), Promise.resolve()), random: () => 0.5 },
     });
     api.failNext("messages.get", 429);
     const res = await connector.fetchSince({ since: "2026-10-01" }, new Set());
     expect(res.messages).toHaveLength(4);
     expect(api.callsOf("messages.get")).toHaveLength(5); // 4 messages + 1 retry
-    expect(delays).toEqual([500]);
+    expect(delays).toEqual([]);
+    expect(waits).toEqual([GMAIL_QUOTA.windowMs + GMAIL_QUOTA.jitterMs / 2]);
   });
 
   it.each([500, 503])("retries a %i on messages.list", async (status) => {
@@ -389,6 +402,288 @@ describe("fetchSince against FakeGmail", () => {
     expect(GET_CONCURRENCY).toBe(4);
     expect(res.messages).toHaveLength(12);
     expect(api.maxInFlight).toBe(4);
+  });
+});
+
+describe("Gmail per-user rate limiting (quota gate)", () => {
+  const SINCE = { since: "2026-10-01" };
+  const RATE_LIMIT = { reason: "rateLimitExceeded" };
+  const many = (n: number): RawMessage[] =>
+    Array.from({ length: n }, (_v, i) =>
+      plainMessage(`1a${i.toString(16).padStart(4, "0")}`, `body ${i}`, {
+        internalDate: String(Date.parse("2026-10-10T00:00:00Z") - i * 1000),
+      }),
+    );
+  /** Lets every queued callback and fake call run (no timers involved). */
+  const ticks = async (n = 20) => {
+    for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r));
+  };
+  const gaxios403 = (data: unknown) => ({ status: 403, response: { status: 403, data } });
+
+  it("classifies 429 and 403 rateLimitExceeded/userRateLimitExceeded as rate limits, never other 403s", () => {
+    const reasons = (reason: string) => ({
+      error: { errors: [{ domain: "usageLimits", reason }] },
+    });
+    expect(isGmailRateLimit({ status: 429 })).toBe(true);
+    expect(isGmailRateLimit(gaxios403(reasons("rateLimitExceeded")))).toBe(true);
+    expect(isGmailRateLimit(gaxios403(reasons("userRateLimitExceeded")))).toBe(true);
+    // The AIP-193 info gaxios attaches as `cause`, and a JSON string body.
+    expect(
+      isGmailRateLimit({ status: 403, cause: { errors: [{ reason: "rateLimitExceeded" }] } }),
+    ).toBe(true);
+    expect(isGmailRateLimit(gaxios403(JSON.stringify(reasons("userRateLimitExceeded"))))).toBe(
+      true,
+    );
+    for (const other of ["insufficientPermissions", "dailyLimitExceeded", "accessNotConfigured"]) {
+      expect(isGmailRateLimit(gaxios403(reasons(other)))).toBe(false);
+    }
+    expect(isGmailRateLimit({ status: 403 })).toBe(false);
+    // The reason alone is not enough: it must come with a 403.
+    const rateReason = reasons("rateLimitExceeded");
+    expect(isGmailRateLimit({ status: 500, response: { status: 500, data: rateReason } })).toBe(
+      false,
+    );
+    expect(isGmailRateLimit(new TimeoutError(1))).toBe(false);
+  });
+
+  it("a 403 rateLimitExceeded mid-fetch holds EVERY worker until the window resets, then completes with every message at half the concurrency", async () => {
+    const seedMany = many(16);
+    const waits: number[] = [];
+    let release!: () => void;
+    const { api, connector } = createFakeGmail({
+      seed: seedMany,
+      quota: {
+        sleep: (ms) => {
+          waits.push(ms);
+          return new Promise<void>((r) => (release = r));
+        },
+        random: () => 0.5,
+      },
+    });
+    api.latencyMs = 5;
+    const limitedId = seedMany[5]?.id as string;
+    api.failNext("messages.get", 403, 1, { ...RATE_LIMIT, id: limitedId });
+    let settled = false;
+    const fetch = connector.fetchSince(SINCE, new Set()).finally(() => (settled = true));
+
+    while (waits.length === 0) await ticks(1);
+    await realDelay(50); // calls already in flight when the pause began finish
+    const callsAtPause = api.callsOf("messages.get").length;
+    await realDelay(50);
+    await ticks();
+    expect(api.callsOf("messages.get")).toHaveLength(callsAtPause); // nobody kept hammering
+    expect(callsAtPause).toBeLessThan(seedMany.length);
+    expect(settled).toBe(false);
+    expect(waits).toEqual([GMAIL_QUOTA.windowMs + GMAIL_QUOTA.jitterMs / 2]);
+
+    api.maxInFlight = 0;
+    release();
+    const res = await fetch;
+    expect(res.messages.map((m) => m.id)).toEqual(seedMany.map((m) => gmailId(m.id as string)));
+    const gets = api.callsOf("messages.get").map((c) => (c.params as { id: string }).id);
+    expect(gets.filter((id) => id === limitedId)).toHaveLength(2);
+    expect(gets).toHaveLength(seedMany.length + 1);
+    expect(api.maxInFlight).toBe(GET_CONCURRENCY / 2);
+  });
+
+  it("honours a Retry-After header instead of the default window", async () => {
+    const waits: number[] = [];
+    const { api, connector } = createFakeGmail({
+      quota: { sleep: (ms) => (waits.push(ms), Promise.resolve()) },
+    });
+    api.failNext("messages.get", 403, 1, { ...RATE_LIMIT, retryAfterSeconds: 7 });
+    const res = await connector.fetchSince(SINCE, new Set());
+    expect(waits).toEqual([7_000]);
+    expect(res.messages).toHaveLength(4);
+  });
+
+  it("clamps a Retry-After beyond the window to GMAIL_QUOTA.maxWaitMs", async () => {
+    const waits: number[] = [];
+    const { api, connector } = createFakeGmail({
+      quota: { sleep: (ms) => (waits.push(ms), Promise.resolve()) },
+    });
+    api.failNext("messages.get", 403, 1, { ...RATE_LIMIT, retryAfterSeconds: 3_600 });
+    await connector.fetchSince(SINCE, new Set());
+    expect(waits).toEqual([GMAIL_QUOTA.maxWaitMs]);
+    expect(GMAIL_QUOTA.maxWaitMs).toBe(GMAIL_QUOTA.windowMs + GMAIL_QUOTA.jitterMs);
+  });
+
+  it("a 429 on messages.list goes through the same gate (window wait, no per-call backoff)", async () => {
+    const waits: number[] = [];
+    const delays: number[] = [];
+    const { api, connector } = createFakeGmail({
+      retry: { sleep: (ms) => (delays.push(ms), Promise.resolve()) },
+      quota: { sleep: (ms) => (waits.push(ms), Promise.resolve()), random: () => 0 },
+    });
+    api.failNext("messages.list", 429);
+    const res = await connector.fetchSince(SINCE, new Set());
+    expect(api.callsOf("messages.list")).toHaveLength(2);
+    expect([waits, delays]).toEqual([[GMAIL_QUOTA.windowMs], []]);
+    expect(res.messages).toHaveLength(4);
+  });
+
+  it("a non-rate-limit 403 (insufficientPermissions) is neither waited out nor retried", async () => {
+    const waits: number[] = [];
+    const delays: number[] = [];
+    const { api, connector } = createFakeGmail({
+      seed: many(1),
+      retry: { sleep: (ms) => (delays.push(ms), Promise.resolve()) },
+      quota: { sleep: (ms) => (waits.push(ms), Promise.resolve()) },
+    });
+    api.failNext("messages.get", 403, 1, { reason: "insufficientPermissions" });
+    await expect(connector.fetchSince(SINCE, new Set())).rejects.toMatchObject({
+      kind: "upstream",
+      message: "Gmail messages.get failed (HTTP 403)",
+    });
+    expect(api.callsOf("messages.get")).toHaveLength(1);
+    expect([waits, delays]).toEqual([[], []]);
+  });
+
+  it("fails with a typed rate_limited error (fixed text, no Google message) once the consecutive-wait cap is spent", async () => {
+    const waits: number[] = [];
+    const { api, connector } = createFakeGmail({
+      seed: many(1),
+      // A budget that cannot bind, so the consecutive cap is what ends it.
+      quota: { sleep: (ms) => (waits.push(ms), Promise.resolve()), waitBudgetMs: 60 * 60_000 },
+    });
+    api.failNext("messages.get", 403, 100, RATE_LIMIT);
+    const err = (await connector.fetchSince(SINCE, new Set()).catch((e: unknown) => e)) as Error;
+    expect(err).toMatchObject({
+      kind: "rate_limited",
+      message: "Gmail messages.get rate limited (HTTP 403)",
+    });
+    expect(err.message).not.toContain(FAKE_GOOGLE_ERROR_TEXT);
+    expect(waits).toHaveLength(GMAIL_QUOTA.maxConsecutiveWaits);
+    expect(api.callsOf("messages.get")).toHaveLength(GMAIL_QUOTA.maxConsecutiveWaits + 1);
+  });
+
+  it("the fetch's total wait budget ends it rate_limited even when no streak hits the cap, handing over what it fetched", async () => {
+    const seedMany = many(10);
+    const waits: number[] = [];
+    const delivered: string[] = [];
+    const { api, connector } = createFakeGmail({
+      seed: seedMany,
+      concurrency: 1,
+      quota: { sleep: (ms) => (waits.push(ms), Promise.resolve()), random: () => 0.5 },
+    });
+    // Every message is rate limited once, then succeeds: the streak never passes 1.
+    for (const m of seedMany)
+      api.failNext("messages.get", 403, 1, { ...RATE_LIMIT, id: m.id as string });
+    const wait = GMAIL_QUOTA.windowMs + GMAIL_QUOTA.jitterMs / 2;
+    const fits = Math.floor(GMAIL_QUOTA.waitBudgetMs / wait);
+    await expect(
+      connector.fetchSince(SINCE, new Set(), {
+        onMessages: (batch) => {
+          delivered.push(...batch.map((m) => m.id));
+          return Promise.resolve();
+        },
+      }),
+    ).rejects.toMatchObject({ kind: "rate_limited" });
+    expect(waits).toEqual(Array.from({ length: fits }, () => wait));
+    expect(delivered).toEqual(seedMany.slice(0, fits).map((m) => gmailId(m.id as string)));
+  });
+
+  it("on a caller abort the messages fetched but not yet handed over still reach onMessages", async () => {
+    const seedMany = many(3);
+    const inner = new FakeGmailApi(seedMany);
+    const controller = new AbortController();
+    const abortAfter = seedMany[1]?.id as string;
+    const api: GmailApi = {
+      users: {
+        messages: {
+          list: (p, o) => inner.users.messages.list(p, o),
+          get: async (p, o) => {
+            const res = await inner.users.messages.get(p, o);
+            if (p.id === abortAfter) controller.abort(); // aborted with a fetched, undelivered batch
+            return res;
+          },
+        },
+      },
+    };
+    const connector = createGmailConnector({ api, concurrency: 1, quota: { pace: false } });
+    const delivered: string[] = [];
+    await expect(
+      connector.fetchSince(SINCE, new Set(), {
+        signal: controller.signal,
+        onMessages: (batch) => {
+          delivered.push(...batch.map((m) => m.id));
+          return Promise.resolve();
+        },
+      }),
+    ).rejects.toMatchObject({ message: "Gmail fetch cancelled" });
+    expect(delivered).toEqual(seedMany.slice(0, 2).map((m) => gmailId(m.id as string)));
+    expect(inner.callsOf("messages.get")).toHaveLength(2);
+  });
+
+  it("an abort during a quota wait ends the fetch at once (the real abortable wait, default window)", async () => {
+    const api = new FakeGmailApi(many(3));
+    const connector = createGmailConnector({ api, quota: { pace: false } });
+    api.failNext("messages.get", 403, 1, RATE_LIMIT);
+    const controller = new AbortController();
+    const fetch = connector.fetchSince(SINCE, new Set(), { signal: controller.signal });
+    while (api.callsOf("messages.get").length === 0) await ticks(1);
+    await ticks();
+    const calls = api.calls.length;
+    const started = performance.now();
+    controller.abort();
+    await expect(fetch).rejects.toMatchObject({
+      kind: "upstream",
+      message: "Gmail fetch cancelled",
+    });
+    expect(performance.now() - started).toBeLessThan(1_000); // not the ~60 s window
+    expect(api.calls).toHaveLength(calls);
+  });
+
+  it("paces calls proactively with the GMAIL_QUOTA token bucket (default constants)", async () => {
+    const seedMany = many(12);
+    let clock = 0;
+    const sleeps: number[] = [];
+    const connector = createGmailConnector({
+      api: new FakeGmailApi(seedMany),
+      concurrency: 1,
+      quota: {
+        now: () => clock,
+        sleep: (ms) => {
+          sleeps.push(ms);
+          clock += ms;
+          return Promise.resolve();
+        },
+      },
+    });
+    const res = await connector.fetchSince(SINCE, new Set());
+    expect(res.messages).toHaveLength(12);
+    const units = (seedMany.length + 1) * GMAIL_QUOTA.unitsPerCall; // 12 gets + 1 list
+    expect(clock).toBe(
+      ((units - GMAIL_QUOTA.paceBurstUnits) * 1000) / GMAIL_QUOTA.paceUnitsPerSecond,
+    );
+    expect(sleeps.every((ms) => ms > 0)).toBe(true);
+  });
+
+  it("after a rate-limit hit the pace halves and the bucket refills when the window resets", async () => {
+    let clock = 0;
+    const sleeps: number[] = [];
+    const api = new FakeGmailApi(seed);
+    const connector = createGmailConnector({
+      api,
+      concurrency: 1,
+      quota: {
+        pace: { unitsPerSecond: 10, burstUnits: 5 },
+        now: () => clock,
+        random: () => 0.5,
+        sleep: (ms) => {
+          sleeps.push(ms);
+          clock += ms;
+          return Promise.resolve();
+        },
+      },
+    });
+    // Newest first: ...04, ...03 (rate limited once), ...02, ...01.
+    api.failNext("messages.get", 403, 1, { ...RATE_LIMIT, id: "19a0c0ffee000003" });
+    const res = await connector.fetchSince(SINCE, new Set());
+    expect(res.messages).toHaveLength(4);
+    // list from the burst; 04 and 03 at 10 u/s; the window; 03 again from the refilled bucket;
+    // 02 and 01 at the halved 5 u/s.
+    expect(sleeps).toEqual([500, 500, GMAIL_QUOTA.windowMs + GMAIL_QUOTA.jitterMs / 2, 1000, 1000]);
   });
 });
 

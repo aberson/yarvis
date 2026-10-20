@@ -21,9 +21,13 @@ import { gmailId, type Message } from "@yarvis/shared";
 import type { Paths } from "../config/paths.js";
 import { writeJsonAtomic, type AtomicFs } from "../util/atomic-write.js";
 import {
+  abortableSleep,
+  apiErrorReasons,
   callWithRetry,
   DEFAULT_CALL_TIMEOUT_MS,
   httpStatusOf,
+  isRetryableHttpError,
+  retryAfterMs,
   TimeoutError,
   withTimeout,
   type RetryOptions,
@@ -57,6 +61,8 @@ export type GmailErrorKind =
   | "token_invalid"
   /** Consent failed, or the token expired / was revoked (run `yarvis gmail:auth`). */
   | "auth"
+  /** Gmail rate limiting (429 / 403 rateLimitExceeded) outlasted GMAIL_QUOTA's wait cap or budget. */
+  | "rate_limited"
   /** The Gmail API failed after retries, or timed out. */
   | "upstream";
 
@@ -696,23 +702,92 @@ export interface GmailFetchResult {
   skippedCached: number;
 }
 
+export interface GmailFetchOptions {
+  signal?: AbortSignal;
+  /**
+   * Partial progress: called serially (never concurrently), in list order, with batches of fetched
+   * messages while the fetch runs, and, when the fetch fails, with every message fetched before the
+   * failure before it rejects. A rejection here fails the fetch with that same error.
+   */
+  onMessages?: (batch: Message[]) => Promise<void>;
+}
+
 export interface GmailConnector {
   /**
    * Lists INBOX ids for `gmailQuery(cursor)` (all pages), then `messages.get` (format full) only
-   * for ids whose Message id (`gmail:<hex>`) is not in `knownIds`, at most GET_CONCURRENCY at once.
-   * Aborting `signal` stops it scheduling further list/get calls (in-flight calls finish within
-   * their per-call timeout) and rejects with a GmailError.
+   * for ids whose Message id (`gmail:<hex>`) is not in `knownIds`, at most GET_CONCURRENCY at once,
+   * every call behind one per-minute quota gate (GMAIL_QUOTA). Aborting `signal` stops it scheduling
+   * further list/get calls and ends a quota wait at once (in-flight calls finish within their
+   * per-call timeout) and rejects with a GmailError.
    */
   fetchSince(
     cursor: GmailCursor,
     knownIds: ReadonlySet<string>,
-    opts?: { signal?: AbortSignal },
+    opts?: GmailFetchOptions,
   ): Promise<GmailFetchResult>;
   /**
    * `yarvis doctor`'s live check (§5): ONE INBOX `messages.list` with maxResults 1 (a read; the
    * listed id is discarded). Resolving the API re-runs the recorded-scope check in real mode.
    */
   probe(): Promise<void>;
+}
+
+/**
+ * Gmail per-user quota handling: THE one place for its numbers. Google meters Gmail per user in
+ * quota units per minute (messages.list = 5, messages.get = 5), and the ceiling enforced on a real
+ * account can sit far below the documented 15,000/min. So this is adaptive first: on a rate-limit
+ * response every list/get of the fetch pauses behind one shared gate until the window resets, then
+ * resumes at half the pace with half the calls in flight. The proactive pace only makes a hit rare.
+ *
+ * Sizing (the first real refresh: ~400 INBOX messages, an account limit observed at ~114 gets/min
+ * = 570 units/min = 9.5 units/s):
+ *   pass 1 at 25 u/s:   burst 50 u, then ~114 gets + 1 list ~ (575 - 50) / 25   ~ 21 s, hit, wait <= 65 s
+ *   pass 2 at 12.5 u/s: ~114 more gets            ~ (570 - 50) / 12.5 ~ 42 s, hit, wait <= 65 s
+ *   pass 3 at 6.25 u/s: below 9.5 u/s, no more hits; ~172 gets ~ (860 - 50) / 6.25 ~ 130 s
+ *   => ~323 s (~5.4 min) in one run, 2 waits = 130 s of the 300 s wait budget, 2 of 5 in a row.
+ * The budget bounds the waiting: at most 4 full waits (4 x 65 s = 260 s; a 5th would pass 300 s),
+ * so the Gmail stage leaves most of the 15 min job ceiling (D20) to jev/extract/sheets. A fetch
+ * that exhausts it fails rate_limited (stage error, job partial); what it fetched is cached and the
+ * next refresh resumes from there.
+ */
+export const GMAIL_QUOTA = Object.freeze({
+  /** Quota units per messages.list / messages.get call. */
+  unitsPerCall: 5,
+  /** Proactive pace shared by every call of a fetch: 25 units/s = 5 gets/s = 1,500 units/min. */
+  paceUnitsPerSecond: 25,
+  /** Token-bucket burst (units) before the pace applies. */
+  paceBurstUnits: 50,
+  /** Rate-limit hits halve the pace, never below this. */
+  minPaceUnitsPerSecond: 5,
+  /** Wait for the per-minute window to reset when the response has no Retry-After... */
+  windowMs: 60_000,
+  /** ...plus up to this much jitter. */
+  jitterMs: 5_000,
+  /** Clamp on any single wait, Retry-After included (= windowMs + jitterMs). */
+  maxWaitMs: 65_000,
+  /** Total rate-limit waiting allowed per fetch; a wait that would pass it fails the fetch. */
+  waitBudgetMs: 5 * 60_000,
+  /** Rate-limit waits in a row (no successful call in between) before the fetch fails. */
+  maxConsecutiveWaits: 5,
+});
+
+/** Fetched messages reach `onMessages` in batches of this size (and before a pause, and at the end). */
+export const DELIVERY_BATCH = 25;
+
+export interface GmailQuotaOptions {
+  /** Abortable wait (default `abortableSleep` on the global timer); tests inject a fake. */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Clock for the pace bucket, ms (default `performance.now`). */
+  now?: () => number;
+  /** [0, 1) source for the jitter (default Math.random). */
+  random?: () => number;
+  /** Proactive pacing; `false` turns it off (the fake mailbox has no quota). */
+  pace?: { unitsPerSecond: number; burstUnits: number } | false;
+  windowMs?: number;
+  jitterMs?: number;
+  maxWaitMs?: number;
+  waitBudgetMs?: number;
+  maxConsecutiveWaits?: number;
 }
 
 export interface GmailConnectorOptions {
@@ -722,39 +797,24 @@ export interface GmailConnectorOptions {
   retry?: RetryOptions;
   concurrency?: number;
   pageSize?: number;
+  quota?: GmailQuotaOptions;
 }
 
+const RATE_LIMIT_REASONS: ReadonlySet<string> = new Set([
+  "rateLimitExceeded",
+  "userRateLimitExceeded",
+]);
+
 /**
- * Runs `fn` over `items` with at most `limit` in flight; stops launching after a failure or once
- * `signal` is aborted.
+ * Gmail rate limiting: HTTP 429, or HTTP 403 whose `error.errors[].reason` is rateLimitExceeded /
+ * userRateLimitExceeded (domain usageLimits). Every other 403 (insufficient permissions, scope,
+ * API disabled, daily limit) is NOT a rate limit and is never waited out.
  */
-async function mapLimit<T, R>(
-  items: readonly T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-  signal?: AbortSignal,
-): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  let failed = false;
-  const worker = async (): Promise<void> => {
-    while (!failed && next < items.length) {
-      if (signal?.aborted) {
-        failed = true;
-        throw cancelled();
-      }
-      const i = next++;
-      try {
-        out[i] = await fn(items[i] as T);
-      } catch (err) {
-        failed = true;
-        throw err;
-      }
-    }
-  };
-  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker);
-  await Promise.all(workers);
-  return out;
+export function isGmailRateLimit(err: unknown): boolean {
+  if (err instanceof TimeoutError) return false;
+  const status = httpStatusOf(err);
+  if (status === 429) return true;
+  return status === 403 && apiErrorReasons(err).some((r) => RATE_LIMIT_REASONS.has(r));
 }
 
 function cancelled(): GmailError {
@@ -771,19 +831,171 @@ function isAuthFailure(err: unknown): boolean {
   );
 }
 
+const isRateLimited = (err: unknown): err is GmailError =>
+  err instanceof GmailError && err.kind === "rate_limited";
+
+type ResolvedQuota = Required<Omit<GmailQuotaOptions, "pace">> & {
+  pace: { unitsPerSecond: number; burstUnits: number } | false;
+};
+
+/**
+ * One fetch's shared quota gate. Every list/get first passes `ready()`: it waits out an active
+ * rate-limit pause, for a free in-flight slot, and for its units in the pace bucket; `release()`
+ * frees the slot. `limited()` starts ONE pause per rate-limit episode (a call issued before the
+ * current pause began joins it instead of counting again), halves the pace and the in-flight
+ * limit, and rethrows once `maxConsecutiveWaits` pauses ran with no successful call in between.
+ */
+class QuotaGate {
+  private generation = 0;
+  private consecutive = 0;
+  /** Rate-limit waiting started so far in this fetch, ms (bounded by waitBudgetMs). */
+  private waited = 0;
+  private pause: Promise<void> | null = null;
+  private rate: number;
+  private readonly burst: number;
+  private tokens: number;
+  private last: number;
+  /** Calls allowed in flight at once (halved after each pause, never below 1). */
+  private limit: number;
+  private inFlight = 0;
+  private slotWaiters: Array<() => void> = [];
+
+  constructor(
+    private readonly q: ResolvedQuota,
+    concurrency: number,
+    private readonly signal: AbortSignal,
+  ) {
+    this.limit = Math.max(1, concurrency);
+    this.rate = q.pace ? q.pace.unitsPerSecond : 0;
+    this.burst = q.pace ? q.pace.burstUnits : 0;
+    this.tokens = this.burst;
+    this.last = q.now();
+    signal.addEventListener("abort", () => this.wakeAll(), { once: true });
+  }
+
+  private wakeAll(): void {
+    for (const wake of this.slotWaiters.splice(0)) wake();
+  }
+
+  /**
+   * Waits until a call of `units` may go and takes an in-flight slot (free it with `release()`);
+   * resolves with the generation that call belongs to.
+   */
+  async ready(units: number): Promise<number> {
+    for (;;) {
+      if (this.signal.aborted) throw cancelled();
+      if (this.pause) {
+        await this.pause;
+        continue;
+      }
+      if (this.inFlight >= this.limit) {
+        await new Promise<void>((resolve) => this.slotWaiters.push(resolve));
+        continue;
+      }
+      const wait = this.take(units);
+      if (wait === 0) {
+        this.inFlight++;
+        return this.generation;
+      }
+      await this.q.sleep(wait, this.signal);
+    }
+  }
+
+  release(): void {
+    this.inFlight--;
+    this.slotWaiters.shift()?.();
+  }
+
+  /** 0 when `units` were taken from the bucket, else the ms until it holds them. */
+  private take(units: number): number {
+    if (!this.q.pace) return 0;
+    const now = this.q.now();
+    this.tokens = Math.min(this.burst, this.tokens + ((now - this.last) * this.rate) / 1000);
+    this.last = now;
+    if (this.tokens + 1e-9 >= units) {
+      this.tokens -= units;
+      return 0;
+    }
+    return Math.ceil(((units - this.tokens) * 1000) / this.rate);
+  }
+
+  succeeded(generation: number): void {
+    if (generation === this.generation) this.consecutive = 0;
+  }
+
+  /**
+   * A call of `generation` was rate limited. Starts a pause unless one began after that call was
+   * issued (then the caller just joins it via `ready()`); throws `err` once the consecutive cap
+   * or the fetch's wait budget is spent. Each wait is Retry-After or the window, clamped.
+   * `beforeWait` runs once per pause, after every other call is already held at the gate.
+   */
+  async limited(
+    generation: number,
+    err: GmailError,
+    beforeWait: () => Promise<void>,
+  ): Promise<void> {
+    if (generation !== this.generation) return;
+    const waitMs = Math.min(
+      this.q.maxWaitMs,
+      retryAfterMs(err.cause) ?? this.q.windowMs + Math.floor(this.q.random() * this.q.jitterMs),
+    );
+    if (++this.consecutive > this.q.maxConsecutiveWaits) throw err;
+    if (this.waited + waitMs > this.q.waitBudgetMs) throw err;
+    this.waited += waitMs;
+    this.generation++;
+    this.limit = Math.max(1, Math.ceil(this.limit / 2));
+    if (this.q.pace) {
+      this.rate = Math.min(this.rate, Math.max(GMAIL_QUOTA.minPaceUnitsPerSecond, this.rate / 2));
+    }
+    const pause: Promise<void> = this.q.sleep(waitMs, this.signal).then(() => {
+      if (this.pause === pause) this.pause = null;
+      // The window reset: the bucket starts full again (at the halved rate).
+      this.tokens = this.burst;
+      this.last = this.q.now();
+      this.wakeAll();
+    });
+    pause.catch(() => undefined);
+    this.pause = pause;
+    await beforeWait();
+  }
+}
+
 export function createGmailConnector(opts: GmailConnectorOptions): GmailConnector {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
   const concurrency = opts.concurrency ?? GET_CONCURRENCY;
   const pageSize = opts.pageSize ?? LIST_PAGE_SIZE;
   const resolveApi =
     typeof opts.api === "function" ? opts.api : () => Promise.resolve(opts.api as GmailApi);
+  const q = opts.quota ?? {};
+  const quota: ResolvedQuota = {
+    sleep: q.sleep ?? abortableSleep,
+    now: q.now ?? (() => performance.now()),
+    random: q.random ?? Math.random,
+    pace:
+      q.pace === undefined
+        ? {
+            unitsPerSecond: GMAIL_QUOTA.paceUnitsPerSecond,
+            burstUnits: GMAIL_QUOTA.paceBurstUnits,
+          }
+        : q.pace,
+    windowMs: q.windowMs ?? GMAIL_QUOTA.windowMs,
+    jitterMs: q.jitterMs ?? GMAIL_QUOTA.jitterMs,
+    maxWaitMs: q.maxWaitMs ?? GMAIL_QUOTA.maxWaitMs,
+    waitBudgetMs: q.waitBudgetMs ?? GMAIL_QUOTA.waitBudgetMs,
+    maxConsecutiveWaits: q.maxConsecutiveWaits ?? GMAIL_QUOTA.maxConsecutiveWaits,
+  };
+  // A rate limit is waited out by the quota gate, never by per-call backoff (which would let the
+  // other workers keep hitting the same exhausted per-minute window).
+  const baseRetryable = opts.retry?.isRetryable ?? isRetryableHttpError;
+  const retry: RetryOptions = {
+    ...opts.retry,
+    isRetryable: (err) => !isGmailRateLimit(err) && baseRetryable(err),
+  };
 
+  /** One list/get with the per-call timeout and transient retries; errors become a GmailError. */
   async function call<T>(what: string, fn: (o: CallOpts) => Promise<T>): Promise<T> {
     try {
-      return await callWithRetry((signal) => fn({ timeoutMs, signal }), {
-        ...opts.retry,
-        timeoutMs,
-      });
+      return await callWithRetry((signal) => fn({ timeoutMs, signal }), { ...retry, timeoutMs });
     } catch (err) {
       if (err instanceof GmailError) throw err;
       if (err instanceof TimeoutError) {
@@ -795,27 +1007,67 @@ export function createGmailConnector(opts: GmailConnectorOptions): GmailConnecto
         throw new GmailError("auth", `Gmail token expired or revoked; ${REAUTH}`, { cause: err });
       }
       const status = httpStatusOf(err);
-      throw new GmailError(
-        "upstream",
-        `Gmail ${what} failed${status === undefined ? "" : ` (HTTP ${status})`}`,
-        { cause: err },
-      );
+      const suffix = status === undefined ? "" : ` (HTTP ${status})`;
+      // Fixed text only: Google's own message (quota names, limits) is never copied.
+      if (isGmailRateLimit(err)) {
+        throw new GmailError("rate_limited", `Gmail ${what} rate limited${suffix}`, {
+          cause: err,
+        });
+      }
+      throw new GmailError("upstream", `Gmail ${what} failed${suffix}`, { cause: err });
     }
   }
 
   return {
     async fetchSince(cursor, knownIds, fetchOpts = {}) {
-      const { signal } = fetchOpts;
-      const q = gmailQuery(cursor);
+      const { onMessages } = fetchOpts;
+      const query = gmailQuery(cursor);
       const api = await resolveApi();
+      // Aborted by the caller's signal, or here once a worker failed (ends every quota wait).
+      const stop = new AbortController();
+      const signal = fetchOpts.signal
+        ? AbortSignal.any([fetchOpts.signal, stop.signal])
+        : stop.signal;
+      const gate = new QuotaGate(quota, concurrency, signal);
+      let beforeWait: () => Promise<void> = () => Promise.resolve();
+
+      const gated = async <T>(what: string, fn: (o: CallOpts) => Promise<T>): Promise<T> => {
+        for (;;) {
+          let generation: number;
+          try {
+            generation = await gate.ready(GMAIL_QUOTA.unitsPerCall);
+          } catch (err) {
+            if (signal.aborted) throw cancelled();
+            throw err;
+          }
+          let res: T;
+          try {
+            res = await call(what, fn);
+          } catch (err) {
+            gate.release();
+            if (!isRateLimited(err)) throw err;
+            await gate.limited(generation, err, beforeWait);
+            continue;
+          }
+          gate.release();
+          gate.succeeded(generation);
+          return res;
+        }
+      };
+
       const ids: string[] = [];
       const seen = new Set<string>();
       let pageToken: string | undefined;
       do {
-        if (signal?.aborted) throw cancelled();
-        const params: ListParams = { userId: "me", q, labelIds: ["INBOX"], maxResults: pageSize };
+        if (signal.aborted) throw cancelled();
+        const params: ListParams = {
+          userId: "me",
+          q: query,
+          labelIds: ["INBOX"],
+          maxResults: pageSize,
+        };
         if (pageToken) params.pageToken = pageToken;
-        const res = await call("messages.list", (o) => api.users.messages.list(params, o));
+        const res = await gated("messages.list", (o) => api.users.messages.list(params, o));
         for (const m of res.data.messages ?? []) {
           if (m.id && !seen.has(m.id)) {
             seen.add(m.id);
@@ -825,17 +1077,67 @@ export function createGmailConnector(opts: GmailConnectorOptions): GmailConnecto
         pageToken = res.data.nextPageToken ?? undefined;
       } while (pageToken);
       const fresh = ids.filter((hex) => !knownIds.has(gmailId(hex)));
-      const messages = await mapLimit(
-        fresh,
-        concurrency,
-        async (hex) => {
-          const res = await call("messages.get", (o) =>
+
+      // Partial progress: fetched messages reach `onMessages` serially, in list order.
+      const results = new Array<Message | undefined>(fresh.length);
+      const delivered = new Array<boolean>(fresh.length).fill(false);
+      let prefix = 0;
+      let chain = Promise.resolve();
+      const deliver = (all: boolean): Promise<void> => {
+        if (!onMessages) return Promise.resolve();
+        chain = chain.then(async () => {
+          const batch: Message[] = [];
+          const take = (i: number): void => {
+            const m = results[i];
+            if (m && !delivered[i]) {
+              delivered[i] = true;
+              batch.push(m);
+            }
+          };
+          if (all) for (let i = 0; i < fresh.length; i++) take(i);
+          else for (; prefix < fresh.length && results[prefix]; prefix++) take(prefix);
+          if (batch.length > 0) await onMessages(batch);
+        });
+        return chain;
+      };
+      // Hand over what is already fetched before sitting out a quota pause.
+      beforeWait = () => deliver(false);
+
+      let next = 0;
+      let fetched = 0;
+      let failed = false;
+      let firstError: unknown;
+      const worker = async (): Promise<void> => {
+        while (!failed && next < fresh.length) {
+          if (signal.aborted) throw cancelled();
+          const i = next++;
+          const hex = fresh[i] as string;
+          const res = await gated("messages.get", (o) =>
             api.users.messages.get({ userId: "me", id: hex, format: "full" }, o),
           );
-          return normalizeGmailMessage({ ...res.data, id: res.data.id ?? hex });
-        },
-        signal,
+          results[i] = normalizeGmailMessage({ ...res.data, id: res.data.id ?? hex });
+          if (++fetched % DELIVERY_BATCH === 0) await deliver(false);
+        }
+      };
+      const workers = Math.max(1, Math.min(concurrency, fresh.length));
+      await Promise.all(
+        Array.from({ length: workers }, () =>
+          worker().catch((err: unknown) => {
+            if (failed) return;
+            failed = true;
+            firstError = err;
+            stop.abort(); // ends the other workers' quota waits at once
+          }),
+        ),
       );
+      if (failed) {
+        // Keep what was fetched, on an abort too: the caller caches it (its own guard refuses a
+        // write after the job ceiling) and the next run skips it via knownIds.
+        await deliver(true).catch(() => undefined);
+        throw firstError;
+      }
+      await deliver(true);
+      const messages = results.filter((m): m is Message => m !== undefined);
       return { messages, listed: ids.length, skippedCached: ids.length - fresh.length };
     },
 

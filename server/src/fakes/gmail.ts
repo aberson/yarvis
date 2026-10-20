@@ -4,7 +4,8 @@
 // (an array of synthetic `users.messages.get` format-full responses). `messages.list` honours the
 // connector's query the way Gmail would for these fixtures: `after:<epoch>` against internalDate,
 // `-in:spam` / `-in:trash`, and every requested label id. It records every call and can inject
-// failures (an HTTP status, or a hang for timeout tests).
+// failures (an HTTP status shaped like a gaxios error, optionally with a Google `reason` and a
+// Retry-After header, or a hang for timeout tests).
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { REPO_ROOT } from "../config/paths.js";
@@ -27,10 +28,37 @@ export interface FakeGmailCall {
   params: unknown;
 }
 
-type Fault = { kind: "status"; status: number } | { kind: "hang" };
+export interface FaultOptions {
+  /** Google `error.errors[0].reason`, e.g. "rateLimitExceeded" or "insufficientPermissions". */
+  reason?: string;
+  /** A `Retry-After` response header, seconds. */
+  retryAfterSeconds?: number;
+  /** Only a messages.get for this hex id fails (default: the next call of the method). */
+  id?: string;
+}
 
-function httpError(status: number, message: string): Error {
-  return Object.assign(new Error(message), { status });
+type Fault = ({ kind: "status"; status: number } & FaultOptions) | { kind: "hang" };
+
+/**
+ * Stands in for Google's own error message (quota names, limits): it must never reach a status,
+ * CLI or log line.
+ */
+export const FAKE_GOOGLE_ERROR_TEXT =
+  "Quota exceeded for quota metric 'Total Query Cost' and limit 'Units per minute per user'";
+
+/** A gaxios-shaped HTTP error (`status`, `response.{status, headers, data.error.errors}`). */
+function httpError(status: number, message: string, opts: FaultOptions = {}): Error {
+  const headers = new Headers();
+  if (opts.retryAfterSeconds !== undefined) {
+    headers.set("retry-after", String(opts.retryAfterSeconds));
+  }
+  const errors = opts.reason
+    ? [{ domain: "usageLimits", reason: opts.reason, message: FAKE_GOOGLE_ERROR_TEXT }]
+    : [];
+  return Object.assign(new Error(opts.reason ? FAKE_GOOGLE_ERROR_TEXT : message), {
+    status,
+    response: { status, headers, data: { error: { code: status, message, errors } } },
+  });
 }
 
 export function loadGmailSeed(file: string = GMAIL_SEED_FILE): RawMessage[] {
@@ -78,9 +106,16 @@ export class FakeGmailApi implements GmailApi {
     for (const m of seed) this.messages.set(m.id as string, structuredClone(m));
   }
 
-  /** The next `times` calls of `method` reject with an HTTP `status` error. */
-  failNext(method: FakeGmailMethod, status: number, times = 1): void {
-    for (let i = 0; i < times; i++) this.faults.push({ method, fault: { kind: "status", status } });
+  /** The next `times` calls of `method` (for `opts.id`: get calls of that id) reject with `status`. */
+  failNext(method: FakeGmailMethod, status: number, times = 1, opts: FaultOptions = {}): void {
+    for (let i = 0; i < times; i++) {
+      this.faults.push({ method, fault: { kind: "status", status, ...opts } });
+    }
+  }
+
+  /** Drops every injected fault not yet consumed. */
+  clearFaults(): void {
+    this.faults.length = 0;
   }
 
   /** The next call of `method` never settles (timeout tests). */
@@ -98,10 +133,15 @@ export class FakeGmailApi implements GmailApi {
     this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
     try {
       if (this.latencyMs > 0) await new Promise((r) => setTimeout(r, this.latencyMs));
-      const i = this.faults.findIndex((f) => f.method === method);
+      const id = (params as { id?: unknown }).id;
+      const i = this.faults.findIndex(
+        (f) =>
+          f.method === method &&
+          (f.fault.kind === "hang" || f.fault.id === undefined || f.fault.id === id),
+      );
       const fault = i < 0 ? undefined : this.faults.splice(i, 1)[0]?.fault;
       if (fault?.kind === "hang") await new Promise<never>(() => undefined);
-      else if (fault) throw httpError(fault.status, `fake ${method} HTTP ${fault.status}`);
+      else if (fault) throw httpError(fault.status, `fake ${method} HTTP ${fault.status}`, fault);
       return run();
     } finally {
       this.inFlight--;
@@ -145,7 +185,8 @@ export interface FakeGmail {
 
 /**
  * Fake-mode Gmail: a fresh in-memory mailbox seeded from the fixtures (pass `seed: []` for an
- * empty one). Retries use no real sleep.
+ * empty one). Retries and quota waits use no real sleep, and there is no proactive pacing (the fake
+ * mailbox has no quota); pass `quota` to drive either.
  */
 export function createFakeGmail(
   opts: { seed?: readonly RawMessage[]; pageSize?: number } & Partial<
@@ -158,6 +199,7 @@ export function createFakeGmail(
     timeoutMs: opts.timeoutMs,
     concurrency: opts.concurrency,
     retry: { sleep: () => Promise.resolve(), ...opts.retry },
+    quota: { sleep: () => Promise.resolve(), pace: false, ...opts.quota },
   });
   return { api, connector };
 }

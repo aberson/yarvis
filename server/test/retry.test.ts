@@ -92,4 +92,13 @@ describe("retryAfterMs", () => {
     expect(retryAfterMs({ retryAfterMs: -1 })).toBeUndefined();
     expect(retryAfterMs(new Error("x"))).toBeUndefined();
   });
+
+  it("reads the HTTP-date form as its distance from now (floored at 0); garbage stays undefined", () => {
+    const now = Date.parse("2026-10-20T12:00:00Z");
+    const at = (value: string) =>
+      retryAfterMs({ headers: new Headers({ "retry-after": value }) }, now);
+    expect(at("Tue, 20 Oct 2026 12:00:07 GMT")).toBe(7_000);
+    expect(at("Tue, 20 Oct 2026 11:59:00 GMT")).toBe(0);
+    for (const bad of ["soon", "-1", ""]) expect(at(bad)).toBeUndefined();
+  });
 });

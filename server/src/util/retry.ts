@@ -1,6 +1,7 @@
 // THE one retry/backoff helper (D29): exponential backoff on HTTP 429/500/503, plus the 30 s
 // per-call timeout (D20). Used by the Sheets connector (Step 2) and reused by Gmail (Step 4); do not
-// add a second copy elsewhere.
+// add a second copy elsewhere. Also the shared error introspection (status, Retry-After, Google
+// reason codes) and the abortable sleep that Gmail's per-minute quota gate waits on.
 import { setTimeout as delay } from "node:timers/promises";
 
 /** HTTP statuses retried with backoff (§3.4: per-user quota 429, transient 500/503). */
@@ -61,11 +62,12 @@ export function isRetryableHttpError(err: unknown): boolean {
 }
 
 /**
- * The server-requested retry delay in ms; undefined when absent. Reads a numeric `err.retryAfterMs`
- * (the TypeSafe SDK's `RateLimitError`), else `Retry-After` (seconds) from `err.response.headers`
- * (gaxios) or `err.headers` (TypeSafe `APIError`).
+ * The server-requested retry delay in ms; undefined when absent or unparseable. Reads a numeric
+ * `err.retryAfterMs` (the TypeSafe SDK's `RateLimitError`), else `Retry-After` from
+ * `err.response.headers` (gaxios) or `err.headers` (TypeSafe `APIError`), in either form: delay
+ * seconds, or an HTTP-date (its distance from `nowMs`, floored at 0).
  */
-export function retryAfterMs(err: unknown): number | undefined {
+export function retryAfterMs(err: unknown, nowMs: number = Date.now()): number | undefined {
   const e = asRecord(err);
   if (
     typeof e?.retryAfterMs === "number" &&
@@ -80,9 +82,75 @@ export function retryAfterMs(err: unknown): number | undefined {
     typeof headers.get === "function"
       ? (headers.get as (name: string) => unknown).call(headers, "retry-after")
       : (headers["retry-after"] ?? headers["Retry-After"]);
-  if (typeof raw !== "string" && typeof raw !== "number") return undefined;
-  const seconds = Number(raw);
-  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : undefined;
+  if (typeof raw === "number") return Number.isFinite(raw) && raw >= 0 ? raw * 1000 : undefined;
+  if (typeof raw !== "string" || raw.trim() === "") return undefined;
+  if (/^\s*\d+(\.\d+)?\s*$/.test(raw)) return Number(raw) * 1000;
+  // An HTTP-date names its weekday and month ("Wed, 21 Oct 2026 07:28:00 GMT").
+  const at = /[A-Za-z]/.test(raw) ? Date.parse(raw) : Number.NaN;
+  return Number.isNaN(at) ? undefined : Math.max(0, at - nowMs);
+}
+
+/**
+ * The `reason` codes of a Google API error (`error.errors[].reason`, e.g. "rateLimitExceeded"), read
+ * from gaxios' `err.response.data.error`, the AIP-193 info gaxios attaches as `err.cause`, or a
+ * top-level `err.errors`. Only the short reason codes are returned, never any message text.
+ */
+export function apiErrorReasons(err: unknown): string[] {
+  const e = asRecord(err);
+  if (!e) return [];
+  let data: unknown = asRecord(e.response)?.data;
+  if (typeof data === "string" && data.length <= 64_000) {
+    try {
+      data = JSON.parse(data) as unknown;
+    } catch {
+      data = undefined;
+    }
+  }
+  const lists = [
+    asRecord(asRecord(data)?.error)?.errors,
+    asRecord(e.cause)?.errors,
+    asRecord(e.error)?.errors,
+    e.errors,
+  ];
+  const reasons: string[] = [];
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      const reason = asRecord(item)?.reason;
+      if (typeof reason === "string" && /^[A-Za-z]{1,64}$/.test(reason)) reasons.push(reason);
+    }
+  }
+  return reasons;
+}
+
+/** Thrown by `abortableSleep` when its signal aborts. */
+export class SleepAbortedError extends Error {
+  constructor() {
+    super("sleep aborted");
+    this.name = "SleepAbortedError";
+  }
+}
+
+/**
+ * Waits `ms` on the global timer (so test fake timers drive it); rejects with SleepAbortedError as
+ * soon as `signal` aborts (at once when it already has).
+ */
+export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new SleepAbortedError());
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new SleepAbortedError());
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /** Backoff before retry number `attempt` (1-based): base * 2^(attempt-1), capped. */
