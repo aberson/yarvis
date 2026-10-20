@@ -504,6 +504,7 @@ multi-phase progress page is not required.
 - **Produces:** `server/scripts/smoke.ts`, `.github/workflows/ci.yml`, `README.md`.
 - **Done when:** `npm run smoke` passes locally on a free (non-8787) port, its POST/poll requests passing the D22/D28 Host guard; a Vitest test parses `.github/workflows/ci.yml`, asserts every `npm run <x>` it references exists in root `package.json` scripts and that the Playwright install and private-folder leak check steps are present; a test asserts `README.md` contains each §10 command.
 - **Depends on:** 7
+- **Status:** DONE (2026-10-19)
 
 ### Manual Steps
 (These run after /build-phase completes. Operator drives.)

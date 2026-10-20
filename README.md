@@ -12,7 +12,8 @@ folder, a connected-apps page and a settings page.
 the gitignored `private/` folder) is the only write target. Quarantined messages never reach the
 generating model.
 
-> Status: planned, no code yet. See [docs/plans/master_plan.md](docs/plans/master_plan.md).
+> Status: v0 automated build complete (fake mode end to end, CI on Ubuntu). Connecting real accounts
+> is the manual steps M1-M6 in [docs/plans/master_plan.md](docs/plans/master_plan.md).
 
 ## Stack
 
@@ -24,48 +25,93 @@ generating model.
 | WhatsApp | `@whiskeysockets/baileys` 7.x (read side only) | Linked-device client, no browser; on-demand session per refresh |
 | Gmail / Sheets | `googleapis` | Gmail `gmail.readonly` user OAuth; Sheets via service account |
 | Classification | `@typesafe-ai/sdk` (Jev, `jev-latest`) | Cheap typed yes/no decisions; never generates text |
-| Extraction | `claude -p --bare --tools ""` (subscription OAuth) | Forced single-shot; no API key in the repo |
+| Extraction | `claude -p --tools ""` single-shot (subscription OAuth, neutral temp cwd, pinned model) | Forced single-shot; no API key in the repo |
 | Tests / lint | Vitest, Playwright (fake mode), ESLint + Prettier, `tsc --noEmit` | Fakes let every gate run without credentials |
 
 ## Prerequisites
 
-- Node >= 20 (developed on 24) and npm 11
-- `claude` CLI logged in via subscription OAuth
+- Node 24 + npm 11, git
+- The Claude Code CLI (`claude`) on PATH and logged in with your subscription (its own credential
+  store; nothing goes in `private/`)
 - For real connectors (not needed in fake mode): a Google Cloud project with the Gmail and Sheets
   APIs enabled, a Desktop OAuth client, a service-account key, a Google Sheet shared with that
   service account, a TypeSafe API key, and a phone with WhatsApp to scan the link QR
 
-## Setup
+Windows PowerShell is the primary shell; CI runs on Ubuntu.
 
-1. Clone and install:
-   ```powershell
-   git clone https://github.com/aberson/yarvis.git; Set-Location yarvis
-   npm install
-   ```
-2. Create the private folder skeleton and settings:
-   ```powershell
-   npm run setup
-   ```
-3. Run with every external service faked:
-   ```powershell
-   npm run dev:fake   # server 127.0.0.1:8787 + web 127.0.0.1:5173
-   ```
-4. Connect real services, then run for real:
-   ```powershell
-   npm run yarvis -- gmail:auth
-   npm run yarvis -- wa:link
-   npm run yarvis -- wa:chats    # copy the chat JIDs you want into private\settings.json
-   # put TYPESAFE_API_KEY=... in private\.env and the sheet id in private\settings.json
-   npm run yarvis -- doctor
-   npm run dev
-   ```
+## Quickstart (fake mode, no accounts needed)
 
-Quality gates: `npm run typecheck`, `npm run lint`, `npm test`, `npm run e2e`, `npm run smoke`.
+```powershell
+git clone https://github.com/aberson/yarvis.git; Set-Location yarvis
+npm install
+npx playwright install chromium
+npm run setup            # creates private/ skeleton + settings.json from settings.example.json
+npm run dev:fake         # server 127.0.0.1:8787 + web 127.0.0.1:5173 with fake connectors
+```
+
+Open http://127.0.0.1:5173 and press **Refresh**: every external seam (WhatsApp, Gmail, Jev,
+Claude, Sheets) is a seeded fake. `npm run setup` is idempotent and never overwrites an existing
+file: it creates `private/cache/`, `private/settings.json` (copied from `settings.example.json`)
+and `private/.env` with an empty `TYPESAFE_API_KEY=` line. Fake mode keeps its data in
+`private/fake/` (or `YARVIS_PRIVATE_DIR` when set).
+
+## Connect real services
+
+Each is a manual step in the plan (M1-M3):
+
+```powershell
+npm run yarvis -- gmail:auth   # Gmail read-only OAuth consent; writes private/gmail-token.json
+npm run yarvis -- wa:link      # scan the QR to link WhatsApp as a device
+npm run yarvis -- wa:chats     # list chat JIDs; copy the ones you want into private/settings.json
+```
+
+Then put `TYPESAFE_API_KEY` in `private/.env`, put the sheet id in `private/settings.json` and share
+the sheet with the service-account email, and check every seam:
+
+```powershell
+npm run yarvis -- doctor       # live probe per seam: ok | not configured | error
+npm run dev                    # the day-to-day run mode (watch)
+```
+
+`npm run build` / `npm start` exist for CI and a non-watch run.
+
+## Recovery
+
+| Symptom | Fix |
+|---|---|
+| WhatsApp `loggedOut` (`relink required` on the Connected apps page) | `npm run yarvis -- wa:link --reset` |
+| Gmail token expired (Testing-mode consent lasts about 7 days) | `npm run yarvis -- gmail:auth` |
+| Suspect local cache | delete `private/cache` (the Google Sheet is the system of record and survives; the next refresh re-reads and re-screens) |
+| Stuck refresh job | it ends `error` at the 15 min ceiling, or restart the server (a dead process's `private/refresh.lock` is reclaimed) |
+
+## Tests and gates
+
+```powershell
+npm run typecheck
+npm run lint                   # eslint + prettier --check
+npm run build
+npm test                       # vitest unit + integration
+npm run e2e                    # playwright, fake mode (own server on 8797 + web on 5183)
+npm run smoke                  # fake-mode end-to-end refresh gate
+```
+
+Run each as its own command and check its exit status (no `&&` in Windows PowerShell 5.1).
+`npm run smoke` starts the real server entry in fake mode on a free port with a fresh temp private
+dir, POSTs `/api/refresh`, polls `/api/refresh/status` until `done` (30 s budget), checks the
+Todos / Quarantine counts against `server/fixtures/manifest.ts`, then kills the server and removes
+the temp dir; it exits non-zero on any failure.
+
+CI (`.github/workflows/ci.yml`, Ubuntu, Node 24) first runs the private-folder leak check on the
+committed tree: under `private/` (any letter case) only `private/README.md` is tracked, no tracked
+file is one `.gitignore` excludes, and the secret scans find nothing: a TypeSafe key with a real
+value (any file), the M6 secret field names (outside code, fixtures and docs), and private-key /
+Google / Anthropic credential shapes (any file). It prints file names only. Then `npm ci`,
+`npx playwright install --with-deps chromium`, `npm run setup` and every gate above.
 
 ## How a refresh works
 
 ```
-POST /api/refresh
+POST /api/refresh            (localhost Host + header X-Yarvis: 1)
   whatsapp : on-demand Baileys session -> drain allowlisted chats -> cache
   gmail    : OAuth (readonly) -> messages since the configured date -> cache
   jev      : one call per new message: phishing, malicious, spam, has_action_item
@@ -96,14 +142,17 @@ GET /api/refresh/status -> per-stage progress
 
 ```
 yarvis/
-├── package.json            # npm workspaces: shared, server, web
+├── package.json            # npm workspaces: shared, server, web; root scripts
+├── settings.example.json   # tracked template copied by `npm run setup`
+├── .github/workflows/ci.yml
 ├── shared/src/             # types, pinned sheet headers, id helpers
 ├── server/src/             # Express app, connectors/{gmail,whatsapp,sheets}, ai/{jev,extract,decide},
-│                           # pipeline/refresh, routes, cli, fakes
+│                           # pipeline/refresh, routes, cli, doctor, fakes
+├── server/scripts/smoke.ts # `npm run smoke`
 ├── web/src/                # React pages: Todos, Quarantine, Connected apps, Settings
 ├── private/                # GITIGNORED except private/README.md: settings, tokens, caches
 └── docs/plans/master_plan.md
 ```
 
-Public code, private data: everything under `private/` except its README is gitignored, and a test
-plus CI assert that.
+Public code, private data: everything under `private/` except its README is gitignored; a test and
+CI assert that the tracked set under `private/` is exactly `private/README.md`.

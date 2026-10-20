@@ -1,0 +1,84 @@
+# CI (plan Step 8, §11): the full declared gate on Ubuntu, every external seam faked.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # Public code, private data (plan §1.2, M6), checked on the committed index. Prints file NAMES
+      # only, never file content (CI logs are public). Paths are listed with core.quotepath=off so a
+      # non-ASCII name is not C-quoted past the ^private/ match. Fails on:
+      #  1. private/README.md not tracked, or anything else tracked under private/ in ANY letter case
+      #     (Private/ is a different directory on Linux and escapes the private/* ignore rule).
+      #  2. A tracked file that .gitignore says must stay untracked (.env, *.log, private/*, ...).
+      #  3. An API-key VALUE: the TypeSafe key name followed by = or : and a real value (16+ key
+      #     characters, optionally quoted). Placeholders do not match: empty, `...`, <...>, $VAR and
+      #     ${{ }} references, and identifiers too short to be a key. Scans every tracked file.
+      #  4. M6 secret FIELD NAMES (token / key field identifiers). Code and tests legitimately name
+      #     these fields, so this scan alone keeps M6's exclusions (*.example.json, docs/) plus
+      #     *.ts, *.tsx and server/fixtures/ (synthetic tokens, §1.2); scans 3 and 5 still cover them.
+      #  5. Key SHAPES: PEM private key, Google service-account JSON / API key / OAuth client secret /
+      #     refresh token, Anthropic key. Scans every tracked file.
+      # Every pattern is bracketed ([_], [=:], ...) so this file never matches its own text.
+      - name: Private-folder leak check
+        run: |
+          set -euo pipefail
+          fail=0
+          g() { git -c core.quotepath=off "$@"; }
+          report() {
+            if [ -n "$2" ]; then
+              echo "leak check: $1:"
+              printf '%s\n' "$2"
+              fail=1
+            fi
+          }
+          if ! g ls-files --error-unmatch private/README.md >/dev/null 2>&1; then
+            echo "leak check: private/README.md is not tracked"
+            fail=1
+          fi
+          report "tracked under private/ (any case) besides private/README.md" \
+            "$(g ls-files | grep -i '^private/' | grep -vx 'private/README.md' || true)"
+          ignored="$(g ls-files -ci --exclude-standard)"
+          report "tracked files that .gitignore excludes" "$ignored"
+          # git grep exits 1 on no match; any other non-zero status fails the step (set -e).
+          kv=$'typesafe_api_key["\'`]?[[:space:]]*[=:][[:space:]]*["\'`]?[A-Za-z0-9_+/.=-]{16,}'
+          values="$(g grep --cached -l -i -E -e "$kv")" || [ $? -eq 1 ]
+          report "API key value in tracked files" "$values"
+          names="$(g grep --cached -l -i -E -e 'refresh[_]token|private[_]key' -- . \
+            ':!*.example.json' ':!docs/' ':!*.ts' ':!*.tsx' ':!server/fixtures/')" || [ $? -eq 1 ]
+          report "secret field names in tracked non-code files" "$names"
+          shapes="$(g grep --cached -l -E \
+            -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' \
+            -e '"type"[[:space:]]*:[[:space:]]*"service[_]account"' \
+            -e 'AIza[0-9A-Za-z_-]{35}' \
+            -e 'GOCSPX-[0-9A-Za-z_-]{20,}' \
+            -e '1//0[0-9A-Za-z_-]{20,}' \
+            -e 'sk-ant-[0-9A-Za-z_-]{20,}')" || [ $? -eq 1 ]
+          report "key-shaped content in tracked files" "$shapes"
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "private/ leak check OK"
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run setup
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test
+      - run: npm run e2e
+      - run: npm run smoke

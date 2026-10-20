@@ -48,3 +48,18 @@ export function plantPrivate(
   writeFileSync(path.join(bin, process.platform === "win32" ? "claude.exe" : "claude"), "");
   return { TYPESAFE_API_KEY: PLANTED, PATH: bin };
 }
+
+/** Every npm script a text invokes: `npm run <x>`, plus the `npm test` / `npm start` shorthands. */
+export function npmScriptsReferenced(text: string): string[] {
+  const names = new Set<string>();
+  for (const m of text.matchAll(/\bnpm (?:run ([\w:.-]+)|(test|start)\b)/g)) {
+    names.add((m[1] ?? m[2])!);
+  }
+  return [...names];
+}
+
+/** The root package.json scripts (the targets every `npm run <x>` must resolve to). */
+export function rootScripts(): Record<string, string> {
+  const pkg = readJson(path.join(REPO_ROOT, "package.json"));
+  return (pkg.scripts ?? {}) as Record<string, string>;
+}
