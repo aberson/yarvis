@@ -18,6 +18,10 @@ export interface Paths {
   envFile: string;
   /** Google service-account key for the Sheets writer (D6). Never read by any log/print path. */
   serviceAccountFile: string;
+  /** Desktop OAuth client JSON (operator download) read by `yarvis gmail:auth`. Never printed. */
+  oauthClientFile: string;
+  /** Read-only Gmail token minted by `yarvis gmail:auth` (plan §5). Never printed. */
+  gmailTokenFile: string;
   stateFile: string;
   cacheDir: string;
   lockFile: string;
@@ -43,6 +47,8 @@ export function resolvePaths(env: Env = process.env, repoRoot: string = REPO_ROO
     settingsExample: path.join(repoRoot, "settings.example.json"),
     envFile: path.join(privateDir, ".env"),
     serviceAccountFile: path.join(privateDir, "service-account.json"),
+    oauthClientFile: path.join(privateDir, "google-oauth-client.json"),
+    gmailTokenFile: path.join(privateDir, "gmail-token.json"),
     stateFile: path.join(privateDir, "state.json"),
     cacheDir: path.join(privateDir, "cache"),
     lockFile: path.join(privateDir, "refresh.lock"),

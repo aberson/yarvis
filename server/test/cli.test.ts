@@ -7,6 +7,8 @@ import { helpText, runCli, VERBS, type CliIo } from "../src/cli.js";
 import { REPO_ROOT } from "../src/config/paths.js";
 
 const EXPECTED_VERBS = ["gmail:auth", "wa:link", "wa:chats", "doctor", "refresh"];
+/** Verbs whose owning step has not landed yet (gmail:auth is Step 4: see gmail-auth.test.ts). */
+const UNBUILT_VERBS = ["wa:link", "wa:chats", "doctor", "refresh"];
 
 function capture(): CliIo & { out_: string[]; err_: string[] } {
   const out_: string[] = [];
@@ -25,7 +27,7 @@ describe("runCli", () => {
     expect(io.out_.join("\n")).toContain("wa:link [--reset]");
   });
 
-  it.each(EXPECTED_VERBS)("%s exits non-zero with 'not yet implemented'", async (verb) => {
+  it.each(UNBUILT_VERBS)("%s exits non-zero with 'not yet implemented'", async (verb) => {
     const io = capture();
     expect(await runCli([verb], io)).not.toBe(0);
     expect(io.err_.join("\n")).toContain("not yet implemented");

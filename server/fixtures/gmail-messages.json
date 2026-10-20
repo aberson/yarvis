@@ -1,0 +1,327 @@
+[
+  {
+    "id": "19a0c0ffee000001",
+    "threadId": "19a0c0ffee000001",
+    "labelIds": ["INBOX", "CATEGORY_PERSONAL", "UNREAD"],
+    "snippet": "Hi! Please sign and return the field trip permission slip by Friday.",
+    "internalDate": "1792073100000",
+    "payload": {
+      "partId": "",
+      "mimeType": "multipart/alternative",
+      "filename": "",
+      "headers": [
+        {
+          "name": "From",
+          "value": "\"Ms. Rivera\" <teacher@example.com>"
+        },
+        {
+          "name": "To",
+          "value": "me@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Field trip permission slip due Friday"
+        },
+        {
+          "name": "Date",
+          "value": "Thu, 15 Oct 2026 14:05:00 +0000"
+        },
+        {
+          "name": "Content-Type",
+          "value": "multipart/alternative; boundary=\"b1\""
+        }
+      ],
+      "body": {
+        "size": 0
+      },
+      "parts": [
+        {
+          "partId": "0",
+          "mimeType": "text/plain",
+          "filename": "",
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "text/plain; charset=\"UTF-8\""
+            }
+          ],
+          "body": {
+            "size": 143,
+            "data": "SGkhDQoNClBsZWFzZSBzaWduIGFuZCByZXR1cm4gdGhlIGZpZWxkIHRyaXAgcGVybWlzc2lvbiBzbGlwIGJ5IEZyaWRheS4NCkRldGFpbHM6IGh0dHBzOi8vc2Nob29sLmV4YW1wbGUuY29tL3RyaXBzLzQyLg0KDQpUaGFua3MsDQpNcy4gUml2ZXJhDQo"
+          }
+        },
+        {
+          "partId": "1",
+          "mimeType": "text/html",
+          "filename": "",
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "text/html; charset=\"UTF-8\""
+            }
+          ],
+          "body": {
+            "size": 202,
+            "data": "PGRpdj48cD5IaSE8L3A-PHA-UGxlYXNlIDxiPnNpZ24gYW5kIHJldHVybjwvYj4gdGhlIGZpZWxkIHRyaXAgcGVybWlzc2lvbiBzbGlwIGJ5IEZyaWRheS48L3A-PHA-RGV0YWlsczogPGEgaHJlZj0iaHR0cHM6Ly9zY2hvb2wuZXhhbXBsZS5jb20vdHJpcHMvNDIiPnRyaXAgcGFnZTwvYT48L3A-PHA-VGhhbmtzLDxicj5Ncy4gUml2ZXJhPC9wPjwvZGl2Pg"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "19a0c0ffee000002",
+    "threadId": "19a0c0ffee000002",
+    "labelIds": ["INBOX", "CATEGORY_PROMOTIONS"],
+    "snippet": "Autumn sale: 20% off all garden tools this weekend only.",
+    "internalDate": "1792143000000",
+    "payload": {
+      "partId": "",
+      "mimeType": "text/html",
+      "filename": "",
+      "headers": [
+        {
+          "name": "From",
+          "value": "Garden Shop <deals@shop.example.com>"
+        },
+        {
+          "name": "To",
+          "value": "me@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Autumn sale: 20% off garden tools"
+        },
+        {
+          "name": "Date",
+          "value": "Fri, 16 Oct 2026 09:30:00 +0000"
+        },
+        {
+          "name": "Content-Type",
+          "value": "text/html; charset=\"UTF-8\""
+        }
+      ],
+      "body": {
+        "size": 305,
+        "data": "PGh0bWw-PGhlYWQ-PHN0eWxlPi54e2NvbG9yOnJlZH08L3N0eWxlPjwvaGVhZD48Ym9keT48aDE-QXV0dW1uIHNhbGU8L2gxPjxwPjIwJSBvZmYgYWxsIGdhcmRlbiB0b29scyB0aGlzIHdlZWtlbmQgb25seS48L3A-PHA-PGEgaHJlZj0iaHR0cHM6Ly9zaG9wLmV4YW1wbGUuY29tL3NhbGU_dXRtPW1haWwmYW1wO2lkPTciPlNob3Agbm93PC9hPjwvcD48aW1nIHNyYz0iaHR0cHM6Ly9zaG9wLmV4YW1wbGUuY29tL3BpeGVsLmdpZiIgYWx0PSJwaXhlbCI-PHNjcmlwdD52YXIgdHJhY2tlciA9IDE7PC9zY3JpcHQ-PC9ib2R5PjwvaHRtbD4"
+      }
+    }
+  },
+  {
+    "id": "19a0c0ffee000003",
+    "threadId": "19a0c0ffee000003",
+    "labelIds": ["INBOX", "CATEGORY_PERSONAL"],
+    "snippet": "The café on Rue Lafayette confirmed Saturday at 10h.",
+    "internalDate": "1792262700000",
+    "payload": {
+      "partId": "",
+      "mimeType": "text/plain",
+      "filename": "",
+      "headers": [
+        {
+          "name": "From",
+          "value": "=?ISO-8859-1?Q?Ren=E9e_Dupont?= <renee@example.com>"
+        },
+        {
+          "name": "To",
+          "value": "me@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "=?ISO-8859-1?Q?R=E9union_au_caf=E9?= =?ISO-8859-1?Q?_samedi?="
+        },
+        {
+          "name": "Date",
+          "value": "Sat, 17 Oct 2026 18:45:00 +0000"
+        },
+        {
+          "name": "Content-Type",
+          "value": "text/plain; charset=\"ISO-8859-1\""
+        }
+      ],
+      "body": {
+        "size": 123,
+        "data": "Qm9uam91ciwKClRoZSBjYWbpIG9uIFJ1ZSBMYWZheWV0dGUgY29uZmlybWVkIFNhdHVyZGF5IGF0IDEwaC4gUGxlYXNlIGJyaW5nIHRoZSBjcuhtZSBicvts6WUgb3JkZXIgZm9ybS4KCsAgYmllbnT0dCwKUmVu6WUK"
+      }
+    }
+  },
+  {
+    "id": "19a0c0ffee000004",
+    "threadId": "19a0c0ffee000004",
+    "labelIds": ["INBOX", "UNREAD"],
+    "snippet": "Your account will be suspended. Verify your password within 24 hours.",
+    "internalDate": "1792293120000",
+    "payload": {
+      "partId": "",
+      "mimeType": "multipart/mixed",
+      "filename": "",
+      "headers": [
+        {
+          "name": "From",
+          "value": "Account Security <security@verify.example.com>"
+        },
+        {
+          "name": "To",
+          "value": "me@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Urgent: verify your account now"
+        },
+        {
+          "name": "Date",
+          "value": "Sun, 18 Oct 2026 03:12:00 +0000"
+        },
+        {
+          "name": "Content-Type",
+          "value": "multipart/mixed; boundary=\"m1\""
+        }
+      ],
+      "body": {
+        "size": 0
+      },
+      "parts": [
+        {
+          "partId": "0",
+          "mimeType": "multipart/alternative",
+          "filename": "",
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "multipart/alternative; boundary=\"a1\""
+            }
+          ],
+          "body": {
+            "size": 0
+          },
+          "parts": [
+            {
+              "partId": "0.0",
+              "mimeType": "text/plain",
+              "filename": "",
+              "headers": [
+                {
+                  "name": "Content-Type",
+                  "value": "text/plain; charset=\"UTF-8\""
+                }
+              ],
+              "body": {
+                "size": 105,
+                "data": "WW91ciBhY2NvdW50IHdpbGwgYmUgc3VzcGVuZGVkLiBWZXJpZnkgeW91ciBwYXNzd29yZCB3aXRoaW4gMjQgaG91cnMgYXQgaHR0cHM6Ly9leGFtcGxlLmNvbS9zZWN1cmUtbG9naW4K"
+              }
+            },
+            {
+              "partId": "0.1",
+              "mimeType": "text/html",
+              "filename": "",
+              "headers": [
+                {
+                  "name": "Content-Type",
+                  "value": "text/html; charset=\"UTF-8\""
+                }
+              ],
+              "body": {
+                "size": 134,
+                "data": "PHA-WW91ciBhY2NvdW50IHdpbGwgYmUgc3VzcGVuZGVkLiA8YSBocmVmPSJodHRwOi8vbG9naW4udmVyaWZ5LmV4YW1wbGUuY29tL3ZlcmlmeT91PW1lIj5WZXJpZnkgeW91ciBwYXNzd29yZDwvYT4gd2l0aGluIDI0IGhvdXJzLjwvcD4"
+              }
+            }
+          ]
+        },
+        {
+          "partId": "1",
+          "mimeType": "text/plain",
+          "filename": "instructions.txt",
+          "headers": [
+            {
+              "name": "Content-Type",
+              "value": "text/plain; name=\"instructions.txt\""
+            },
+            {
+              "name": "Content-Disposition",
+              "value": "attachment; filename=\"instructions.txt\""
+            }
+          ],
+          "body": {
+            "attachmentId": "ANGjdJ_synthetic_attachment_0001",
+            "size": 120
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "19a0c0ffee000005",
+    "threadId": "19a0c0ffee000005",
+    "labelIds": ["SPAM"],
+    "snippet": "You have won a prize.",
+    "internalDate": "1792299600000",
+    "payload": {
+      "partId": "",
+      "mimeType": "text/plain",
+      "filename": "",
+      "headers": [
+        {
+          "name": "From",
+          "value": "Prize Desk <winner@prize.example.com>"
+        },
+        {
+          "name": "To",
+          "value": "me@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "You have won"
+        },
+        {
+          "name": "Date",
+          "value": "Sun, 18 Oct 2026 05:00:00 +0000"
+        },
+        {
+          "name": "Content-Type",
+          "value": "text/plain; charset=\"UTF-8\""
+        }
+      ],
+      "body": {
+        "size": 65,
+        "data": "WW91IGhhdmUgd29uIGEgcHJpemUuIENsYWltIGl0IGF0IGh0dHA6Ly9wcml6ZS5leGFtcGxlLmNvbS9jbGFpbQo"
+      }
+    }
+  },
+  {
+    "id": "19a0c0ffee000006",
+    "threadId": "19a0c0ffee000006",
+    "labelIds": ["INBOX"],
+    "snippet": "Reminder from last month.",
+    "internalDate": "1789905600000",
+    "payload": {
+      "partId": "",
+      "mimeType": "text/plain",
+      "filename": "",
+      "headers": [
+        {
+          "name": "From",
+          "value": "Library <library@example.com>"
+        },
+        {
+          "name": "To",
+          "value": "me@example.com"
+        },
+        {
+          "name": "Subject",
+          "value": "Library card renewal"
+        },
+        {
+          "name": "Date",
+          "value": "Sun, 20 Sep 2026 12:00:00 +0000"
+        },
+        {
+          "name": "Content-Type",
+          "value": "text/plain; charset=\"UTF-8\""
+        }
+      ],
+      "body": {
+        "size": 50,
+        "data": "UmVtaW5kZXIgZnJvbSBsYXN0IG1vbnRoOiByZW5ldyB0aGUgbGlicmFyeSBjYXJkLgo"
+      }
+    }
+  }
+]

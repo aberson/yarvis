@@ -1,8 +1,15 @@
 // `yarvis` verb dispatcher (plan §5): `npm run yarvis -- <verb>`. Verbs are thin wrappers over the
 // server modules; each lands with its own step, and until then it exits non-zero with
-// "not yet implemented".
+// "not yet implemented". Built so far: gmail:auth (Step 4).
 import { loadPrivateEnv } from "./config/env.js";
-import { resolvePaths } from "./config/paths.js";
+import { resolvePaths, type Paths } from "./config/paths.js";
+import {
+  createGoogleOAuthClient,
+  GmailError,
+  openInBrowser,
+  runGmailAuth,
+  type GmailAuthDeps,
+} from "./connectors/gmail.js";
 import { isMainModule } from "./util/is-main.js";
 
 export interface Verb {
@@ -10,7 +17,7 @@ export interface Verb {
   usage: string;
   summary: string;
   /** Undefined until the owning step builds it. */
-  run?: (args: string[], io: CliIo) => Promise<number>;
+  run?: (args: string[], io: CliIo, deps: CliDeps) => Promise<number>;
 }
 
 export interface CliIo {
@@ -18,11 +25,45 @@ export interface CliIo {
   err(line: string): void;
 }
 
+/** What verbs run against; tests inject a temp private dir and fake OAuth pieces. */
+export interface CliDeps {
+  paths: Paths;
+  /** `gmail:auth` OAuth seams (default: googleapis OAuth2 client + the system browser). */
+  gmailAuth: Pick<GmailAuthDeps, "createOAuthClient" | "openBrowser" | "consentTimeoutMs">;
+}
+
+export function defaultCliDeps(): CliDeps {
+  return {
+    paths: resolvePaths(),
+    gmailAuth: { createOAuthClient: createGoogleOAuthClient, openBrowser: openInBrowser },
+  };
+}
+
+/** `gmail:auth`: prints exactly "ok" on success; failures print a safe one-line reason. */
+async function gmailAuthVerb(args: string[], io: CliIo, deps: CliDeps): Promise<number> {
+  if (args.length > 0) {
+    io.err("yarvis gmail:auth: takes no arguments");
+    return 2;
+  }
+  try {
+    await runGmailAuth({ paths: deps.paths, ...deps.gmailAuth });
+  } catch (err) {
+    // GmailError messages are built to never contain token or private values; anything else is
+    // reported by class only, since a library error could echo a request or response body.
+    const reason = err instanceof GmailError ? err.message : "unexpected failure";
+    io.err(`yarvis gmail:auth: ${reason}`);
+    return 1;
+  }
+  io.out("ok");
+  return 0;
+}
+
 export const VERBS: readonly Verb[] = [
   {
     name: "gmail:auth",
     usage: "gmail:auth",
     summary: "Mint the read-only Gmail token (private/gmail-token.json)",
+    run: gmailAuthVerb,
   },
   {
     name: "wa:link",
@@ -60,7 +101,11 @@ const defaultIo: CliIo = {
   err: (line) => process.stderr.write(`${line}\n`),
 };
 
-export async function runCli(argv: readonly string[], io: CliIo = defaultIo): Promise<number> {
+export async function runCli(
+  argv: readonly string[],
+  io: CliIo = defaultIo,
+  deps?: Partial<CliDeps>,
+): Promise<number> {
   const [first, ...rest] = argv;
   if (first === undefined) {
     io.err(helpText());
@@ -80,7 +125,7 @@ export async function runCli(argv: readonly string[], io: CliIo = defaultIo): Pr
     io.err(`yarvis ${verb.name}: not yet implemented`);
     return 1;
   }
-  return verb.run(rest, io);
+  return verb.run(rest, io, { ...defaultCliDeps(), ...deps });
 }
 
 if (isMainModule(import.meta.url)) {

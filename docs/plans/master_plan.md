@@ -460,7 +460,7 @@ multi-phase progress page is not required.
 - **Produces:** `server/src/connectors/gmail.ts`, `server/src/cli.ts` (gmail:auth), `server/src/fakes/gmail.ts`, fixtures, tests.
 - **Done when:** a test asserts `SCOPES` deep-equals `["https://www.googleapis.com/auth/gmail.readonly"]` exactly; a token fixture with an extra scope is refused with a clear error; normalization tests cover multipart, HTML-only, and non-UTF-8 bodies; the query string for since `2026-10-01` (no cursor) and for a `lastRunAt` cursor (24 h overlap) is asserted verbatim; a cached id causes no `messages.get` call; a 429-then-success `messages.get` is retried and succeeds.
 - **Depends on:** 1, 2
-- **Status:** BLOCKED (2026-10-19)
+- **Status:** DONE (2026-10-19)
 
 <!-- autofix-applied: 2026-10-19 -->
 ### Step 5: WhatsApp on-demand read-only connector
