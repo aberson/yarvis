@@ -3,7 +3,7 @@ import { createContext, useContext } from "react";
 
 export const en = {
   appName: "Yarvis",
-  brand: "J.A.R.V.I.S.",
+  brand: "Y.A.R.V.I.S.",
   navTodos: "Todos",
   navQuarantine: "Quarantine",
   navControls: "Controls",

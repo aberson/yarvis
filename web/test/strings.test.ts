@@ -16,7 +16,7 @@ describe("string tables", () => {
       "Quarantine",
       "Controls",
     ]);
-    expect([en.brand, pirate.brand]).toEqual(["J.A.R.V.I.S.", "Y.A.R.V.I.S."]);
+    expect([en.brand, pirate.brand]).toEqual(["Y.A.R.V.I.S.", "Y.A.R.V.I.S."]);
     for (const key of ["navTodos", "navQuarantine", "navControls"] as const) {
       expect(pirate[key]).not.toBe(en[key]);
     }

@@ -248,7 +248,7 @@ generating model (Claude). That is the guardrail that matters.
   | FakeSheets | `sheet-seed.json` | `{Todos: Todo[], Quarantine: QuarantineItem[]}` |
 
 ### `web/src/`
-- `App.tsx` + routes: `/todos`, `/quarantine`, `/controls` (`/apps` and `/settings` redirect there, D40); the header shows the chosen logo + `J.A.R.V.I.S.` wordmark (`Y.A.R.V.I.S.` in pirate mode, D39).
+- `App.tsx` + routes: `/todos`, `/quarantine`, `/controls` (`/apps` and `/settings` redirect there, D40); the header shows the chosen logo + `Y.A.R.V.I.S.` wordmark (D39).
 - `pages/Todos.tsx` — list with source tag chips, done checkbox (`PATCH /api/todos/:id`), hide-done toggle, Refresh button with stage progress and each stage's `error` text (polls `/api/refresh/status` every 2 s while running; refetches todos when the state turns terminal), "Open sheet" link.
 - `pages/Quarantine.tsx` — quarantined rows with reason + scores + link.
 - `pages/Controls.tsx` — the merged Connected apps + Settings page (D40): look and feel (pirate toggle, logo picker over the 10 `LOGO_IDS`, both `PATCH /api/settings`), connection cards (`pages/Connections.tsx`, from `/api/status`), thresholds (read-only display), private dir path.
@@ -811,7 +811,7 @@ Invocation: `claude -p --tools "" --model claude-haiku-5-5 --output-format json 
 | D36 | D | JSONL torn-line rule: only an unterminated final line is torn (skipped; next append truncates it); a corrupt newline-terminated line is an error; shared by loader and writer | proposed (build 2026-10-19) |
 | D37 | D | CI leak check: `private/` must track exactly `private/README.md` (any case); no tracked file that `.gitignore` excludes; TYPESAFE_API_KEY value scan (>=16 chars) and key-shape scan over all tracked files; field-name scan excludes code/fixtures/docs | proposed (build 2026-10-19) |
 | D38 | D | `settings.since` also accepts an exact UTC instant (`YYYY-MM-DDTHH:MM[:SS]Z`); one parser `sinceEpochMs` (shared/src/since.ts) used by settings validation, the Gmail cursor and the WhatsApp floor. Motivation: a clean-slate reset at M4 needed a floor of "now", and a day floor plus the 24 h cursor overlap would re-fetch the day's mail | proposed (operator polish 2026-10-20) |
-| D39 | D | Header logo: 10 HUD-ring + pirate-mark SVGs, `settings.logo` (one of `LOGO_IDS`, default `reactor-skull`), writable via `PATCH /api/settings {logo}`; wordmark `J.A.R.V.I.S.` (`Y.A.R.V.I.S.` in pirate mode) | proposed (operator polish 2026-10-20) |
+| D39 | D | Header logo: 10 HUD-ring + pirate-mark SVGs, `settings.logo` (one of `LOGO_IDS`, default `reactor-skull`), writable via `PATCH /api/settings {logo}`; wordmark `Y.A.R.V.I.S.` (J.A.R.V.I.S. was the inspiration only) | proposed (operator polish 2026-10-20) |
 | D40 | D | Connected apps + Settings merge into one Controls page (`/controls`, pirate "The Helm"); three nav items, old routes redirect; supersedes D12's "four nav items" | proposed (operator polish 2026-10-20) |
 | D41 | D | Single dark J.A.R.V.I.S. HUD theme (navy/cyan, red + black highlights) as CSS tokens in `styles.css`; Desktop launcher `scripts/launch.ps1` + `scripts/install-shortcut.ps1` (icon `scripts/yarvis.ico`) | proposed (operator polish 2026-10-20) |
 
