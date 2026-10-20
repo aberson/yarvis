@@ -10,3 +10,5 @@ package-lock.json
 *.md
 docs/
 .build-step/
+# Recorded verbatim from one live `claude -p --output-format json` run (plan Step 3, D34).
+server/fixtures/claude-json-envelope.json

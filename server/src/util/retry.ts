@@ -60,9 +60,21 @@ export function isRetryableHttpError(err: unknown): boolean {
   return status !== undefined && RETRYABLE_HTTP_STATUSES.has(status);
 }
 
-/** `Retry-After` (seconds) from the error's response headers, in ms; undefined when absent. */
+/**
+ * The server-requested retry delay in ms; undefined when absent. Reads a numeric `err.retryAfterMs`
+ * (the TypeSafe SDK's `RateLimitError`), else `Retry-After` (seconds) from `err.response.headers`
+ * (gaxios) or `err.headers` (TypeSafe `APIError`).
+ */
 export function retryAfterMs(err: unknown): number | undefined {
-  const headers = asRecord(asRecord(asRecord(err)?.response)?.headers);
+  const e = asRecord(err);
+  if (
+    typeof e?.retryAfterMs === "number" &&
+    Number.isFinite(e.retryAfterMs) &&
+    e.retryAfterMs >= 0
+  ) {
+    return e.retryAfterMs;
+  }
+  const headers = asRecord(asRecord(e?.response)?.headers) ?? asRecord(e?.headers);
   if (!headers) return undefined;
   const raw =
     typeof headers.get === "function"

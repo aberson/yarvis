@@ -5,6 +5,7 @@ import {
   callWithRetry,
   httpStatusOf,
   isRetryableHttpError,
+  retryAfterMs,
   TimeoutError,
   withRetry,
   withTimeout,
@@ -80,5 +81,15 @@ describe("withTimeout", () => {
       callWithRetry(fn, { timeoutMs: 10, sleep: () => Promise.resolve() }),
     ).rejects.toBeInstanceOf(TimeoutError);
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("retryAfterMs", () => {
+  it("reads gaxios response headers, TypeSafe APIError headers and RateLimitError.retryAfterMs", () => {
+    expect(retryAfterMs({ response: { headers: { "retry-after": "2" } } })).toBe(2000);
+    expect(retryAfterMs({ headers: new Headers({ "retry-after": "3" }) })).toBe(3000);
+    expect(retryAfterMs({ retryAfterMs: 1500, headers: new Headers() })).toBe(1500);
+    expect(retryAfterMs({ retryAfterMs: -1 })).toBeUndefined();
+    expect(retryAfterMs(new Error("x"))).toBeUndefined();
   });
 });

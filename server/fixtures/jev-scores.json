@@ -1,0 +1,10 @@
+{
+  "gmail:19a2f0c0de000001": { "phishing": 0.03, "malicious": 0.02, "spam": 0.31, "action": 0.08 },
+  "gmail:19a2f0c0de000002": { "phishing": 0.96, "malicious": 0.74, "spam": 0.42, "action": 0.88 },
+  "wa:15555550123@s.whatsapp.net:3EB0F1X7URE00001": {
+    "phishing": 0.01,
+    "malicious": 0.01,
+    "spam": 0.02,
+    "action": 0.93
+  }
+}

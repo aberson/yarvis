@@ -96,6 +96,26 @@ export interface Settings {
   };
 }
 
+/**
+ * Jev security score keys, in the FIXED order used by `decide().reason` and the Quarantine
+ * `reason` column (§3.4): phishing, malicious, spam.
+ */
+export const SECURITY_SCORE_KEYS = ["phishing", "malicious", "spam"] as const;
+export type SecurityScoreKey = (typeof SECURITY_SCORE_KEYS)[number];
+
+/** Every Jev score key: the three security questions plus `action` (has_action_item). */
+export const JEV_SCORE_KEYS = [...SECURITY_SCORE_KEYS, "action"] as const;
+export type JevScoreKey = (typeof JEV_SCORE_KEYS)[number];
+
+/**
+ * Raw Jev scores for one message (§4, §12.2): each is a noul probability in [0, 1]. THE one shape
+ * for scores: the classifier, `decide()`, the fakes and the decisions cache all use it.
+ */
+export type JevScores = Record<JevScoreKey, number>;
+
+/** Routing thresholds (settings `jev.thresholds`, D1). */
+export type JevThresholds = Settings["jev"]["thresholds"];
+
 /** `GET /api/settings` response: the full settings object plus the resolved private dir. */
 export type SettingsResponse = Settings & { privateDir: string };
 
