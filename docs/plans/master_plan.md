@@ -1,6 +1,6 @@
 # Yarvis — master plan (v0)
 
-Status: PLANNED (no code yet). Written 2026-10-19 by `/plan-init`.
+Status: Phase 1 automated build COMPLETE (Steps 1-8 DONE 2026-10-19, issues #2-#8 and #15 closed); manual steps M1-M6 pending. Written 2026-10-19 by `/plan-init`.
 
 ## 1. What This Is
 
@@ -113,8 +113,9 @@ interface Message {
 | `private/google-oauth-client.json`, `private/gmail-token.json`, `private/service-account.json`, `private/.env` | secrets | never read by any log/print path |
 
 Writes to JSONL are append + fsync; `state.json`/`settings.json` are written via temp file + rename.
-JSONL load rules (D17): an unparseable FINAL line (torn append) is skipped and counted in the log; a
-malformed line elsewhere is a hard error naming file and line. `messages.jsonl` is first-wins per
+JSONL load rules (D17, D36): an unterminated FINAL line (no trailing newline — a torn append) is skipped
+and counted in the log, and the next append first truncates it; any malformed newline-terminated line is
+a hard error naming file and line. `messages.jsonl` is first-wins per
 id; `decisions.jsonl` is last-record-wins per id (a retry appends a superseding record).
 
 `state.json` types: `lastRunAt` is an ISO 8601 UTC string; `lastMessageTs` is Unix epoch seconds
@@ -224,7 +225,7 @@ generating model (Claude). That is the guardrail that matters.
 ### `server/src/`
 - `index.ts` — Express app factory `createApp(deps)` with the localhost guard (D22): 403 `bad_host` unless `Host` is `127.0.0.1:<p>` or `localhost:<p>` where `<p>` is the port the request actually arrived on (`req.socket.localPort`, so `main.ts` on 8787, the smoke on a free port and supertest on an ephemeral port all pass) or the configured web port (`YARVIS_WEB_PORT`, default 5173) (D28); POST/PATCH also require header `X-Yarvis: 1` (403 otherwise; `web/src/api.ts` always sends it); `main.ts` binds `127.0.0.1:8787`; `YARVIS_FAKE=1` (set via `cross-env`) wires all fakes.
 - `config/paths.ts` — resolves `private/` (default `<repo>/private`; in fake mode `<repo>/private/fake` so fake runs never touch real caches, cursors or the lock (D32); override `YARVIS_PRIVATE_DIR`) and names `private/state.json`, `private/cache/`, `private/refresh.lock`; `main.ts` and `cli.ts` load `<privateDir>/.env` via `dotenv` at startup (following any `YARVIS_PRIVATE_DIR` override) before any client is constructed; an absent file or key means jev is `not configured`. `config/settings.ts` — load/validate/write settings (zod); when `private/settings.json` is absent it falls back to `settings.example.json` defaults (read-only until a PATCH, which creates the file).
-- `lock.ts` — cross-process lock (D19): exclusive-create `private/refresh.lock` holding `{pid, startedAt}`; stale (reclaimed) when the pid is dead or the lock is older than the 15 min job ceiling. `runRefresh`, `wa:link` and `wa:chats` acquire it; held → POST /api/refresh returns 409 and the CLI exits non-zero with `refresh already running`.
+- `lock.ts` — cross-process lock (D19): exclusive-create `private/refresh.lock` holding `{pid, startedAt}`; stale (reclaimed) when the pid is dead or the lock is older than 17 min (the 15 min job ceiling + a 2 min settle grace for the abandoned stage, D35). `runRefresh`, `wa:link` and `wa:chats` acquire it; held → POST /api/refresh returns 409 and the CLI exits non-zero with `refresh already running`.
 - `connectors/gmail.ts` — the ONLY `googleapis` Gmail importer. `SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"] as const` (test asserts exact equality); `private/gmail-token.json` is the googleapis `Credentials` object from `oauth2Client.getToken()` (`{access_token, refresh_token, scope, token_type, expiry_date}`, `scope` space-separated); `loadCredentials()` refuses the token unless `scope.split(" ")` deep-equals `SCOPES`; `fetchSince(sinceISO, knownIds)` → `gmail.users.messages.list({userId:"me", q, labelIds:["INBOX"]})` paginated, then `messages.get({format:"full"})` only for ids not in `knownIds` (bounded concurrency 4; 429/500/503 retry/backoff via `util/retry.ts`; 30 s per-call timeout), MIME → text (text/plain preferred, text/html stripped with `html-to-text`). Query: `after:<epoch of max(settings.since, gmail.lastRunAt − 24 h)> -in:spam -in:trash`.
 - `connectors/whatsapp.ts` — the ONLY `@whiskeysockets/baileys` importer. Exposes `linkDevice()` (QR via `connection.update.qr` + `qrcode-terminal`; re-creates the socket once on `DisconnectReason.restartRequired`, success on `connection: "open"`), `listChats()`, `drain({allowlist, sinceTs})` (keeps `messageTimestamp >= sinceTs − 24 h`, id dedup gives exactly-once; first-run `sinceTs` = `settings.since`; a `loggedOut` close throws typed `WaLoggedOut`, other closes end the drain with what was collected) (D21, D23). Socket options: `{auth: state, markOnlineOnConnect: false, syncFullHistory: false, browser: Browsers.windows("Yarvis")}`. Collects `messaging-history.set` (`messages: WAMessage[]`) and `messages.upsert` (`{messages, type}`) until 8 s of quiet or 60 s max, then closes. Text = `message.conversation ?? message.extendedTextMessage?.text`. **Read-only pin:** the module's exported surface has no send capability; a Vitest grep test asserts no file under `server/src` contains `sendMessage`, `sendPresenceUpdate`, `readMessages`, `chatModify`, `groupParticipantsUpdate`.
 - `connectors/sheets.ts` — the ONLY Sheets importer; service account via `google.auth.GoogleAuth({keyFile, scopes:["https://www.googleapis.com/auth/spreadsheets"]})`; `ensureTab`, `readRows(tab)`, `upsertRows(tab, rowsById)`, retry/backoff via `util/retry.ts`.
@@ -517,11 +518,17 @@ multi-phase progress page is not required.
 - **Issue:** #9
 - **Commands:**
   ```powershell
+  # Prerequisite (once): creates private\settings.json and private\.env from the templates.
+  Set-Location C:\Users\abero\dev\yarvis
+  npm install
+  npm run setup
+  ```
+  ```powershell
   # In Google Cloud Console (browser): create project "yarvis", enable Gmail API + Google Sheets API,
   # create an OAuth client (Desktop app) -> download JSON to private\google-oauth-client.json,
   # add your Gmail address as a test user on the consent screen,
   # create a service account -> key JSON to private\service-account.json,
-  # create a blank Google Sheet, share it (Editor) with the service-account email, copy its id into private\settings.json "sheetId".
+  # create a blank Google Sheet, share it (Editor) with the service-account email, copy its id (the segment of the sheet URL after /d/) into private\settings.json "sheetId", replacing the <google sheet id> placeholder.
   Set-Location C:\Users\abero\dev\yarvis
   npm run yarvis -- gmail:auth
   npm run yarvis -- doctor
@@ -563,7 +570,10 @@ multi-phase progress page is not required.
   ```
   ```powershell
   npm run yarvis -- wa:chats
-  # copy the JIDs you want (your self-chat, family group) into private\settings.json "whatsapp.allowlist"
+  # copy the chats you want (your self-chat, family group) into private\settings.json "whatsapp.allowlist"
+  # as objects, e.g. { "jid": "15555550123@s.whatsapp.net", "name": "Me" }.
+  # If it prints "no chats received", run wa:chats right after wa:link (history arrives mostly just
+  # after linking), or re-run `npm run yarvis -- wa:link --reset` then wa:chats.
   ```
 - **What to look for:**
   | Check | Expected outcome |
@@ -611,7 +621,7 @@ multi-phase progress page is not required.
   | Backlog after >24 h closed | WhatsApp messages sent while Yarvis was closed appear after the next refresh. If NOT, file the "keep session open" fallback as a follow-up |
   | Idempotency | repeat refreshes add no duplicate rows; Jev/Claude call counts in the job status stay at zero for already-seen messages |
   | Pending extraction | set `extract.model` in `private\settings.json` to an invalid alias, refresh → new actionable rows land as pending; restore the model, refresh → actions filled (never `claude /logout`: it logs out every Claude Code session on the machine) |
-  | Jev fail-closed | set an invalid `TYPESAFE_API_KEY` in `private\.env`, refresh → job ends `error` at stage jev, sheet unchanged; restore the key, refresh → the held messages are screened |
+  | Jev fail-closed | set an invalid `TYPESAFE_API_KEY` in `private\.env` and restart `npm run dev` (`.env` is read once at server start; or use `npm run yarvis -- refresh`, which reads it per run), refresh → job ends `error` at stage jev, sheet unchanged; restore the key, restart, refresh → the held messages are screened |
   | Pirate toggle | survives restart; data unchanged |
   | Gmail token expiry | around day 7 after consent the gmail stage errors and Connected apps shows `lastError`; `npm run yarvis -- gmail:auth` recovers |
   | Findings | append to `docs/observations/m5.md` (timings, misclassifications, errors) |
@@ -628,15 +638,64 @@ multi-phase progress page is not required.
   Set-Location C:\Users\abero\dev\yarvis
   git ls-files private
   git grep -n -i -E "typesafe_api_key=|refresh_token|private_key" -- . ":!*.example.json" ":!docs/"
+  git status --short
+  gh repo view aberson/yarvis --json visibility
+  gh run list --repo aberson/yarvis --limit 1
   ```
 - **What to look for:**
   | Check | Expected outcome |
   |---|---|
   | `git ls-files private` | exactly `private/README.md` |
-  | grep | no hits outside examples/docs |
-  | GitHub | repo public, CI green on the smoke job |
+  | grep | hits only where code, tests or fixtures merely NAME the fields (the CI leak scan, D37, is the authority); any hit carrying an actual value (a long key, a PEM block, a real refresh token) is a leak |
+  | `git status --short` | empty (everything committed and pushed) |
+  | `gh repo view` | `"visibility":"PUBLIC"` |
+  | `gh run list` | latest CI run `completed` / `success` (includes the smoke job and the leak check) |
 
 After all Automated Steps complete, the orchestrator prints: **Please run M1 next.**
+
+---
+
+## Phase 1 — yarvis v0 (automated build)
+
+**All 8 issues closed (#2–#8, #15). 415/415 vitest + 8/8 Playwright + `npm run smoke` passing. Zero type errors. Zero lint violations.** Built 2026-10-19 via `/build-phase`; checkpoints `e37ba8c` … `4b03ffb`. Manual steps M1–M6 (#9–#14) are next.
+
+### What was built
+
+- npm-workspaces monorepo (`shared`, `server`, `web`), strict TS, ESLint + Prettier, Vitest, Playwright; `private/` split with a leak test (Step 1)
+- Localhost guard (Host allowlist on the arriving port + `X-Yarvis: 1` on writes), settings with atomic temp+rename writes, pirate toggle, `cli.ts` verb dispatcher (Step 1)
+- Google Sheets store: single-flight `ensureTab`, column-ownership upserts, retry/backoff, Todos + Quarantine pages (Step 2)
+- Jev classifier (real `@typesafe-ai/sdk` 0.7.0), the single `claude -p` extraction seam (no bare-mode flag, stdin prompt, untrusted-data wrapping, tree kill), `decide()` (Step 3)
+- Gmail read-only connector: pinned readonly scope + token re-check, `gmail:auth` loopback flow, cursor query, cached-id skip (Step 4)
+- WhatsApp on-demand read-only connector over Baileys 7.0.0-rc14, `wa:link` / `wa:chats`, read-only grep guard, cross-process `refresh.lock` (Step 5)
+- Refresh pipeline (five stages, JSONL caches, decisions recomputed per run, pending retry, cursors, partial/error policy, 15 min ceiling), job routes, Refresh UI, `yarvis refresh`, fake-mode wiring of all five seams (Step 6)
+- `GET /api/status`, Connected apps page, `yarvis doctor` (D24) (Step 7)
+- `npm run smoke`, GitHub Actions CI with a private-data leak check, README quickstart + recovery (Step 8)
+
+### Files changed
+
+| Area | Change |
+|---|---|
+| root | `package.json` (workspaces + scripts incl. `smoke`), `tsconfig*.json`, `eslint.config.mjs`, `.prettier*`, `.gitattributes`, `.gitignore`, `vitest.config.ts`, `settings.example.json`, `README.md`, `.github/workflows/ci.yml` |
+| `shared/src/` | `types.ts` (Message, Todo, scores, RefreshStatus, status types), `sheet.ts` (pinned headers), `ids.ts`, `index.ts` |
+| `server/src/` | `index.ts`, `main.ts`, `http.ts`, `access-log.ts`, `setup.ts`, `cli.ts`, `wa-cli.ts`, `refresh-cli.ts`, `doctor.ts`, `lock.ts`, `config/` (3), `connectors/` (gmail, whatsapp, sheets), `ai/` (jev, extract, decide), `pipeline/` (refresh, cache, state, seams, job, errors, configured, activity), `routes/` (6), `util/` (retry, atomic-write, text, …), `fakes/` (5), `types/html-to-text.d.ts` |
+| `server/scripts/` | `smoke.ts` |
+| `server/fixtures/` | synthetic Gmail/WhatsApp/Jev/Claude/Sheets seeds, live-recorded `claude-json-envelope.json`, `manifest.ts` (`EXPECTED = {todos: 8, quarantine: 5}`) |
+| `web/src/` | `App.tsx`, `main.tsx`, `api.ts`, `refresh-poll.ts`, `styles.css`, `i18n/strings.ts` (en + pirate), `ui/format.ts`, `pages/{Todos,Quarantine,ConnectedApps,Settings}.tsx` |
+| tests | `server/test/` (33 test files + `helpers.ts` + `stubs/`), `shared/test/` (2), `web/test/` (3), `web/e2e/` (smoke spec + teardown) |
+
+### Fresh context notes for Phase 1
+
+| Issue | Detail |
+|---|---|
+| Lock stale age | 17 min, not 15 (D35): the ceiling reports `error` at 15 min but the lock is held until the abandoned stage settles (≤ 2 min); a same-process leftover lock is reclaimed by token. |
+| Torn JSONL | Only an unterminated final line is torn (D36); a corrupt complete line is a hard error. |
+| Claude CLI on Windows | `findClaudeBinary` resolves `claude.exe`/`.cmd`/`.bat`; `.cmd` is spawned via `cmd.exe /d /s /c` with per-argument quoting (fixed argv, prompt on stdin). |
+| Claude model alias | The live envelope recorded with `--model claude-haiku-5-5` reports `claude-haiku-4-5-20251001` in `modelUsage` — verify the alias at M2 (D4). |
+| Status card history | `/api/status` `lastSuccessAt`/`lastError` are in-memory, fed only by this server's own refresh jobs (a CLI `yarvis refresh` or a restart leaves them blank). |
+| Quarantine read filter | `GET /api/todos` hides todos whose message has an active Quarantine row; sheet rows are never deleted. `PATCH /api/todos/:id` does not apply the filter (low hardening note). |
+| Fake mode | `private/fake` is reset at server start (caches/state; FakeSheets is in-memory); a `YARVIS_PRIVATE_DIR` override is never reset. |
+| CI leak scan | D37; the manual M6 grep in this plan still shows harmless field-name hits in code/fixtures — CI excludes those for the field-name scan only. |
+| Sheets append retry | `values.append` is retried on 500/503 per §3.4 and could duplicate a row if Google applied the first attempt; reads dedupe first-row-wins. |
 
 ## 12. Appendix
 
@@ -728,9 +787,9 @@ Invocation: `claude -p --tools "" --model claude-haiku-5-5 --output-format json 
 | D14 | D | Body caps: 4000 chars stored, 2000 chars to Jev; links extracted | proposed |
 | D15 | D | `--reviewers full` (fake mode) on Steps 1, 2, 6; `code` elsewhere; worktree isolation | superseded by D26 |
 | D16 | D | Decisions cache stores raw Jev scores only; `decide()` recomputes quarantined/actionable from CURRENT thresholds every run (no API cost); a message that stops being quarantined proceeds to extraction and its Quarantine row gets `released_at` (row kept, not deleted) | proposed |
-| D17 | D | Stage work sets by pipeline state (no decision → jev; actionable + extraction missing/pending → extract; no `sheetSyncedAt` → sheets); JSONL load: torn final line skipped, messages first-wins, decisions last-wins | proposed |
+| D17 | D | Stage work sets by pipeline state (no decision → jev; actionable + extraction missing/pending → extract; no `sheetSyncedAt` → sheets); JSONL load: torn final line skipped, messages first-wins, decisions last-wins | proposed (torn-line rule refined by D36) |
 | D18 | D | Todos gains `extraction_status` (done\|pending\|none); pending row is `#1`, retry overwrites `#1` + appends `#2`/`#3`, `[]` is terminal `none`; column ownership: pipeline owns content cells, operator owns `status`, `created_at` write-once | proposed |
-| D19 | D | Cross-process lock `private/refresh.lock` (exclusive create, pid + startedAt, stale-pid/15 min takeover) shared by `runRefresh`, `wa:link`, `wa:chats`; held → 409 / CLI non-zero | proposed |
+| D19 | D | Cross-process lock `private/refresh.lock` (exclusive create, pid + startedAt, stale-pid/15 min takeover) shared by `runRefresh`, `wa:link`, `wa:chats`; held → 409 / CLI non-zero | proposed (stale age superseded by D35: 17 min) |
 | D20 | D | Stage failure policy: source stages independent with terminal `partial`; per-message Jev 4xx skips the message, Quarantine `jev_error` after 3 attempts; 30 s per-call timeout (Jev/Sheets/Gmail); 15 min job ceiling | proposed |
 | D21 | D | Cursors in `private/state.json`; Gmail `after:` and WhatsApp `>= sinceTs` both overlap 24 h with id dedup; Gmail skips `messages.get` for cached ids; top-level `settings.since` floors both sources; `lastHistoryId` dropped | proposed |
 | D22 | D | Localhost hardening: Host allowlist (403 `bad_host`), `X-Yarvis: 1` required on POST/PATCH; `PATCH /api/todos/:id` update-only (400 `bad_id`, 404 unknown) with `encodeURIComponent` ids; todos read cache invalidated by PATCH and job completion | proposed |
@@ -746,6 +805,9 @@ Invocation: `claude -p --tools "" --model claude-haiku-5-5 --output-format json 
 | D32 | D | Fake mode defaults its private dir to `<repo>/private/fake` (isolated caches, cursors, lock) | proposed |
 | D33 | D | e2e runs its own fresh fake server on 8797/5183 with a temp private dir, `reuseExistingServer: false` | proposed |
 | D34 | D | Step 3 records a live claude envelope after writing the synthetic fixture; on CLI failure hand-authors it (`synthesized: true`) and M2 re-validates | proposed |
+| D35 | D | Lock stale age 17 min (15 min ceiling + 2 min settle grace + 5 s margin); at the ceiling the job reports error immediately but keeps `refresh.lock` until the abandoned stage settles; supersedes D19's 15 min clause | proposed (build 2026-10-19) |
+| D36 | D | JSONL torn-line rule: only an unterminated final line is torn (skipped; next append truncates it); a corrupt newline-terminated line is an error; shared by loader and writer | proposed (build 2026-10-19) |
+| D37 | D | CI leak check: `private/` must track exactly `private/README.md` (any case); no tracked file that `.gitignore` excludes; TYPESAFE_API_KEY value scan (>=16 chars) and key-shape scan over all tracked files; field-name scan excludes code/fixtures/docs | proposed (build 2026-10-19) |
 
 ### 12.6 Reused workspace patterns (producing files read)
 

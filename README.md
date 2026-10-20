@@ -12,8 +12,10 @@ folder, a connected-apps page and a settings page.
 the gitignored `private/` folder) is the only write target. Quarantined messages never reach the
 generating model.
 
-> Status: v0 automated build complete (fake mode end to end, CI on Ubuntu). Connecting real accounts
-> is the manual steps M1-M6 in [docs/plans/master_plan.md](docs/plans/master_plan.md).
+> **Phase 1 complete** — issues #2–#8, #15 closed. v0 runs end to end in fake mode (refresh pipeline,
+> Todos/Quarantine/Connected apps/Settings, `yarvis doctor`, smoke gate, CI on Ubuntu). 415 tests passing,
+> 0 type errors, 0 lint violations. Connecting real accounts is the manual steps M1-M6 in
+> [docs/plans/master_plan.md](docs/plans/master_plan.md).
 
 ## Stack
 

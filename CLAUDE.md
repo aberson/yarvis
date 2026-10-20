@@ -16,11 +16,11 @@ Plan: [docs/plans/master_plan.md](docs/plans/master_plan.md).
 | Runtime | Node 24, npm workspaces (`shared/`, `server/`, `web/`), TypeScript strict |
 | Backend | Express 5 on `127.0.0.1:8787` (`tsx` dev, `tsc` build) |
 | Frontend | Vite + React 18 + react-router on `127.0.0.1:5173` (`--strictPort`) |
-| WhatsApp | `@whiskeysockets/baileys` 7.x (read side only) + `qrcode-terminal` |
-| Gmail / Sheets | `googleapis` — Gmail `gmail.readonly` user OAuth; Sheets service account |
-| Classification | `@typesafe-ai/sdk` (`POST https://api.typesafe.ai/v1/systemone`, model `jev-latest`) |
+| WhatsApp | `@whiskeysockets/baileys` 7.0.0-rc14 (exact pin; read side only) + `qrcode-terminal` |
+| Gmail / Sheets | `googleapis` — Gmail `gmail.readonly` user OAuth (`html-to-text` for HTML bodies); Sheets service account |
+| Classification | `@typesafe-ai/sdk` 0.7.0 exact (`POST https://api.typesafe.ai/v1/systemone`, model `jev-latest`) |
 | Extraction | `claude -p --tools "" --model <fast> --output-format json --no-session-persistence --strict-mcp-config --disable-slash-commands`, neutral temp cwd (subscription OAuth, no API key; never the bare-mode flag) |
-| Tests / lint | Vitest, Playwright (fake mode), ESLint + Prettier, `tsc --noEmit` |
+| Tests / lint | Vitest, Playwright (fake mode), ESLint + Prettier, `tsc --noEmit`, `npm run smoke`; GitHub Actions CI on Ubuntu (`.github/workflows/ci.yml`) |
 
 Shell: PowerShell (Windows 11). Fake mode `YARVIS_FAKE=1` replaces every external seam.
 
@@ -34,27 +34,33 @@ npm run dev:fake              # server --port 8787 + web --port 5173, all connec
 npm run dev                   # real connectors (needs private/ configured)
 npm run typecheck
 npm run lint
+npm run build                 # tsc -b (shared/server) + vite build
 npm test                      # vitest unit + integration
 npm run e2e                   # playwright smoke in fake mode
 npm run smoke                 # fake-mode end-to-end refresh gate
 npm run yarvis -- gmail:auth | wa:link [--reset] | wa:chats | doctor | refresh
 ```
 
-Gate: run `npm run typecheck`, `npm run lint`, `npm test`, `npm run e2e` (and `npm run smoke` from
-Step 8 on) as separate commands, each checked for exit status — no `&&` in PowerShell 5.1.
+Gate: run `npm run typecheck`, `npm run lint`, `npm run build`, `npm test`, `npm run e2e` and
+`npm run smoke` as separate commands, each checked for exit status — no `&&` in PowerShell 5.1.
 
 ## Layout
 
 ```
-shared/src/        types.ts (Message, Todo, ...), sheet.ts (pinned headers), ids.ts
-server/src/        index.ts (app factory), main.ts, config/, connectors/{gmail,whatsapp,sheets}.ts,
-                   ai/{jev,extract,decide}.ts, pipeline/refresh.ts, routes/, cli.ts, doctor.ts,
-                   lock.ts (private/refresh.lock), fakes/
-server/fixtures/   fake seeds        server/test/   vitest
-web/src/           App.tsx, api.ts, i18n/strings.ts (en + pirate), pages/{Todos,Quarantine,ConnectedApps,Settings}.tsx
-web/e2e/           playwright smoke
+shared/src/        types.ts (Message, Todo, scores, RefreshStatus, status), sheet.ts (pinned headers), ids.ts
+server/src/        index.ts (app factory), main.ts, http.ts (guard, sendError), access-log.ts, setup.ts,
+                   cli.ts (verb dispatcher) + wa-cli.ts + refresh-cli.ts, doctor.ts, lock.ts (refresh.lock),
+                   config/ (paths, env, settings), connectors/{gmail,whatsapp,sheets}.ts,
+                   ai/{jev,extract,decide}.ts, pipeline/{refresh,job,cache,state,seams,errors,configured,activity}.ts,
+                   routes/{health,settings,todos,quarantine,refresh,status}.ts, util/, fakes/ (5 seams)
+server/scripts/    smoke.ts (npm run smoke)
+server/fixtures/   synthetic seeds + manifest.ts (EXPECTED fake-mode totals)      server/test/   vitest
+web/src/           App.tsx, api.ts, refresh-poll.ts, i18n/strings.ts (en + pirate), ui/,
+                   pages/{Todos,Quarantine,ConnectedApps,Settings}.tsx
+web/e2e/           playwright smoke (own fake server on 8797/5183)
 private/           GITIGNORED (only private/README.md tracked): settings.json, .env, OAuth client,
-                   gmail-token.json, service-account.json, wa-auth/, state.json, cache/
+                   gmail-token.json, service-account.json, wa-auth/, state.json, cache/; fake/ in fake mode
+.github/workflows/ ci.yml (setup, gates, smoke, private-data leak check)
 docs/plans/        master_plan.md
 ```
 
@@ -73,16 +79,21 @@ messages with action `>= 0.6` reach `ai/extract.ts`, the single `claude -p` subp
 
 **Pipeline**: `pipeline/refresh.ts` `runRefresh(deps)` runs whatsapp → gmail → jev → extract →
 sheets as one job (`POST /api/refresh`, poll `GET /api/refresh/status`), one at a time across
-processes via `private/refresh.lock` (the CLI `refresh`/`wa:*` verbs take it too). JSONL caches
+processes via `private/refresh.lock` (the CLI `refresh`/`wa:*` verbs take it too; stale after 17 min =
+15 min job ceiling + 2 min settle grace, D35). Stage errors surfaced to status/CLI/logs use the fixed
+content-free vocabulary in `pipeline/errors.ts`. JSONL caches
 in `private/cache` make re-runs idempotent; the Google Sheet (tabs Todos, Quarantine) is the
 system of record, upserted by `id`.
+
+**Status**: `GET /api/status` reports configured flags (files/env only, no live probes) plus the last
+refresh's per-seam success/error; `yarvis doctor` live-probes each configured seam (D24).
 
 **Web**: four routes (Todos, Quarantine, Connected apps, Settings); pirate mode swaps a string
 table only.
 
 ## Current state
 
-Plan written 2026-10-19, no code yet. Next: `/repo-init`, then `/plan-expedite --plan yarvis/docs/plans/master_plan.md`, then `/build-phase` in an Opus window.
+Phase 1 complete (2026-10-19) — v0 runs end to end in fake mode: refresh pipeline, Todos/Quarantine/Connected apps/Settings, `yarvis doctor`, smoke gate and CI (415 vitest + 8 e2e). Next: manual steps M1-M6 in the plan (connect Google, TypeSafe, WhatsApp; first real refresh).
 
 ## Environment requirements
 
@@ -99,3 +110,4 @@ Plan written 2026-10-19, no code yet. Next: `/repo-init`, then `/plan-expedite -
 - npm runs scripts through cmd.exe on Windows: set env vars with `cross-env`, never inline `VAR=1`.
 - Vite on Windows: keep `--host 127.0.0.1 --strictPort`.
 - Fresh worktrees need `npm install` before the first gate.
+- Windows npm installs the Claude CLI as `claude.cmd`; `ai/extract.ts` resolves `.exe`/`.cmd`/`.bat` and spawns a `.cmd` via `cmd.exe /d /s /c` with per-argument quoting — keep message content out of argv (prompt goes on stdin).
