@@ -313,7 +313,12 @@ export type JevBatchResult = Map<string, JevScores | JevMessageRejected>;
 export async function classifyBatch(
   jev: Jev,
   messages: readonly Message[],
-  opts: { concurrency: number; onResult?: (id: string, r: JevScores | JevMessageRejected) => void },
+  opts: {
+    concurrency: number;
+    onResult?: (id: string, r: JevScores | JevMessageRejected) => void;
+    /** Once aborted no further call is launched; in-flight calls end within their timeout. */
+    signal?: AbortSignal;
+  },
 ): Promise<JevBatchResult> {
   const results: JevBatchResult = new Map();
   const concurrency = Math.max(1, Math.floor(opts.concurrency));
@@ -321,7 +326,12 @@ export async function classifyBatch(
   let failure: JevServiceError | undefined;
   let callbackFailure: { error: unknown } | undefined;
   const worker = async (): Promise<void> => {
-    while (failure === undefined && callbackFailure === undefined && next < messages.length) {
+    while (
+      failure === undefined &&
+      callbackFailure === undefined &&
+      !opts.signal?.aborted &&
+      next < messages.length
+    ) {
       const message = messages[next++] as Message;
       let outcome: JevScores | JevMessageRejected;
       try {
@@ -348,7 +358,10 @@ export async function classifyBatch(
   return results;
 }
 
-/** The decisions-cache record for a per-message rejection (`attempts` counts this one). */
+/**
+ * The decisions-cache record for a per-message rejection (`attempts` counts this one). The error is
+ * a fixed string with the status only: the library's text could echo the request (message data).
+ */
 export function jevErrorRecord(err: JevMessageRejected, previousAttempts = 0): JevErrorRecord {
-  return { error: err.message, attempts: previousAttempts + 1 };
+  return { error: `jev rejected the message (HTTP ${err.status})`, attempts: previousAttempts + 1 };
 }

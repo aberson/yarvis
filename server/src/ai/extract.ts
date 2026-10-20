@@ -51,9 +51,14 @@ export type ExtractionResult =
   | { status: Extract<ExtractionStatus, "none">; actions: [] }
   | { status: Extract<ExtractionStatus, "pending">; actions: []; error: string };
 
+/** Per-call options: aborting `signal` tree-kills a running child (the refresh job ceiling). */
+export interface ExtractOptions {
+  signal?: AbortSignal;
+}
+
 /** Anything that extracts: the real claude seam or `FakeClaude`. */
 export interface Extractor {
-  extract(input: ExtractInput): Promise<ExtractionResult>;
+  extract(input: ExtractInput, opts?: ExtractOptions): Promise<ExtractionResult>;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -163,6 +168,8 @@ export interface ClaudeRunOptions {
   tmpRoot?: string;
   /** Injected whole-tree kill (default `killProcessTree`); tests use it to order kill vs close. */
   killTree?: (child: ChildProcess) => Promise<void>;
+  /** Aborting it tree-kills the child the same way a timeout does (result: pending). */
+  signal?: AbortSignal;
 }
 
 export interface ClaudeRunResult {
@@ -220,6 +227,7 @@ export async function runClaude(prompt: string, opts: ClaudeRunOptions): Promise
       env: opts.env ?? claudeChildEnv(),
       timeoutMs: opts.timeoutMs,
       killTree: opts.killTree ?? killProcessTree,
+      signal: opts.signal,
     });
   } finally {
     await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(
@@ -237,6 +245,7 @@ function spawnOnce(
     env: NodeJS.ProcessEnv;
     timeoutMs: number;
     killTree: (child: ChildProcess) => Promise<void>;
+    signal?: AbortSignal;
   },
 ): Promise<ClaudeRunResult> {
   return new Promise((resolve) => {
@@ -250,12 +259,14 @@ function spawnOnce(
     // Assigned once the child is up; finish() may run earlier (spawn failure), so not a const.
     let timer: NodeJS.Timeout | undefined = undefined;
     let grace: NodeJS.Timeout | undefined;
+    let detachAbort = (): void => undefined;
 
     const finish = (exitCode: number | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       clearTimeout(grace);
+      detachAbort();
       resolve({
         stdout: Buffer.concat(out).toString("utf8"),
         stderr: Buffer.concat(err).toString("utf8"),
@@ -265,6 +276,11 @@ function spawnOnce(
       });
     };
 
+    if (o.signal?.aborted) {
+      error = "claude cancelled";
+      finish(null);
+      return;
+    }
     let child: ChildProcess;
     try {
       child = spawn(binary, args, {
@@ -301,6 +317,16 @@ function spawnOnce(
         armGrace();
       });
     };
+
+    if (o.signal) {
+      const signal = o.signal;
+      const onAbort = (): void => {
+        error ??= "claude cancelled";
+        kill();
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      detachAbort = () => signal.removeEventListener("abort", onAbort);
+    }
 
     child.on("error", (e) => {
       error ??= `cannot start claude: ${oneLineError(e)}`;
@@ -431,10 +457,14 @@ export interface ClaudeExtractorOptions extends Omit<ClaudeRunOptions, "timeoutM
 export class ClaudeExtractor implements Extractor {
   constructor(private readonly opts: ClaudeExtractorOptions) {}
 
-  async extract(input: ExtractInput): Promise<ExtractionResult> {
+  async extract(input: ExtractInput, opts: ExtractOptions = {}): Promise<ExtractionResult> {
     const timeoutMs = this.opts.timeoutMs ?? DEFAULT_EXTRACT_TIMEOUT_MS;
     try {
-      const run = await runClaude(buildExtractPrompt(input), { ...this.opts, timeoutMs });
+      const run = await runClaude(buildExtractPrompt(input), {
+        ...this.opts,
+        timeoutMs,
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      });
       return interpretRun(run, timeoutMs);
     } catch (err) {
       return pending(`claude seam failed: ${oneLineError(err)}`);

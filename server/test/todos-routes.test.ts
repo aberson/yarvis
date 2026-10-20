@@ -58,7 +58,12 @@ describe("GET /api/todos", () => {
   it("reads the sheet at most once per 10 s, and a PATCH invalidates the cache", async () => {
     let clock = 1_000_000;
     const { app, api } = setup({ now: () => clock });
-    const reads = () => api.calls.filter((c) => c.method === "values.get").length;
+    // Reads of the Todos tab (each load also reads Quarantine to hide held messages' to-dos).
+    const reads = () =>
+      api.calls.filter(
+        (c) =>
+          c.method === "values.get" && (c.params as { range: string }).range.startsWith("'Todos'!"),
+      ).length;
 
     await get(app, "/api/todos");
     const first = reads();

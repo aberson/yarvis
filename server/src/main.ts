@@ -3,8 +3,9 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createApp } from "./index.js";
 import { loadPrivateEnv } from "./config/env.js";
-import { isFakeMode, resolvePaths, resolvePorts, type Env } from "./config/paths.js";
+import { isFakeMode, REPO_ROOT, resolvePaths, resolvePorts, type Env } from "./config/paths.js";
 import { isMainModule } from "./util/is-main.js";
+import { resetFakePipelineState } from "./pipeline/seams.js";
 
 export const BIND_HOST = "127.0.0.1";
 
@@ -15,11 +16,17 @@ export interface StartedServer {
   close(): Promise<void>;
 }
 
-export async function startServer(env: Env = process.env): Promise<StartedServer> {
-  const paths = resolvePaths(env);
+/** `repoRoot` is injectable so tests can point the default private dirs at a temp tree. */
+export async function startServer(
+  env: Env = process.env,
+  repoRoot: string = REPO_ROOT,
+): Promise<StartedServer> {
+  const paths = resolvePaths(env, repoRoot);
   loadPrivateEnv(paths);
   const { serverPort, webPort } = resolvePorts(env);
   const fake = isFakeMode(env);
+  // Fake mode's sheet is in-memory: start its caches/cursors from the fixture state too (D32).
+  if (fake) await resetFakePipelineState(paths);
   const app = createApp({ paths, fake, webPort });
   const server = await new Promise<Server>((resolve, reject) => {
     const s = app.listen(serverPort, BIND_HOST, (err?: Error) => {

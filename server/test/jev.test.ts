@@ -287,7 +287,7 @@ describe("retries and typed errors", () => {
     expect(err).toMatchObject({ status: 400 });
     expect(api.requests).toHaveLength(1);
     expect(jevErrorRecord(err as JevMessageRejected, 1)).toEqual({
-      error: (err as Error).message,
+      error: "jev rejected the message (HTTP 400)",
       attempts: 2,
     });
   });

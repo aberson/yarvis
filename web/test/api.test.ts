@@ -38,3 +38,24 @@ describe("api.patchTodo", () => {
     ]);
   });
 });
+
+describe("api.startRefresh", () => {
+  it("POSTs /api/refresh with X-Yarvis: 1; 202 -> started with the job id, 409 -> not started", async () => {
+    const fetchMock = vi.fn((_url: string, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response(JSON.stringify({ jobId: "job-2026-10-19T18:02:11Z" }), { status: 202 }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await api.startRefresh()).toEqual({ started: true, jobId: "job-2026-10-19T18:02:11Z" });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("/api/refresh");
+    expect(init?.method).toBe("POST");
+    expect((init?.headers as Record<string, string>)["X-Yarvis"]).toBe("1");
+
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify({ running: true }), { status: 409 })),
+    );
+    expect(await api.startRefresh()).toEqual({ started: false });
+  });
+});

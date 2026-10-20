@@ -28,12 +28,13 @@ describe("runCli", () => {
     expect(io.out_.join("\n")).toContain("wa:link [--reset]");
   });
 
-  // Built verbs have their own suites (gmail-auth.test.ts, wa-cli.test.ts); the rest are unbuilt.
-  const IMPLEMENTED_VERBS = ["gmail:auth", "wa:link", "wa:chats"];
+  // Built verbs have their own suites (gmail-auth.test.ts, wa-cli.test.ts, refresh-cli.test.ts);
+  // the rest are unbuilt.
+  const IMPLEMENTED_VERBS = ["gmail:auth", "wa:link", "wa:chats", "refresh"];
   const UNBUILT_VERBS = EXPECTED_VERBS.filter((v) => !IMPLEMENTED_VERBS.includes(v));
 
-  it("leaves exactly doctor and refresh unbuilt", () => {
-    expect(UNBUILT_VERBS).toEqual(["doctor", "refresh"]);
+  it("leaves exactly doctor unbuilt", () => {
+    expect(UNBUILT_VERBS).toEqual(["doctor"]);
     for (const name of IMPLEMENTED_VERBS) {
       expect(VERBS.find((v) => v.name === name)?.run).toBeTypeOf("function");
     }

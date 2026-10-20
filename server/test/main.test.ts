@@ -2,9 +2,12 @@
 // `tsx server/src/main.ts` process reached end to end through HTTP. Guard and settings behaviour
 // is covered by guard.test.ts and settings.test.ts.
 import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { REPO_ROOT } from "../src/config/paths.js";
+import { REPO_ROOT, resolvePaths } from "../src/config/paths.js";
+import { decisionsFile, messagesFile } from "../src/pipeline/cache.js";
 import { BIND_HOST, startServer, type StartedServer } from "../src/main.js";
 import { tempPaths } from "./helpers.js";
 
@@ -26,6 +29,34 @@ describe("startServer", () => {
     const address = started.server.address();
     expect(typeof address === "object" && address?.address).toBe(BIND_HOST);
     expect(started.url).toBe(`http://${BIND_HOST}:${started.port}`);
+  });
+});
+
+describe("startServer in fake mode", () => {
+  // Fake mode's sheet lives in memory, so the default fake private dir (D32) starts each server
+  // from the fixture state; an explicit YARVIS_PRIVATE_DIR is never reset.
+  it("clears the default fake dir's caches and cursors, and never touches an override dir", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "yarvis-root-"));
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    const plant = (dir: string) => {
+      const p = resolvePaths({ YARVIS_PRIVATE_DIR: dir }, root);
+      mkdirSync(p.cacheDir, { recursive: true });
+      for (const f of [messagesFile(p), decisionsFile(p), p.stateFile]) writeFileSync(f, "{}\n");
+      return [messagesFile(p), decisionsFile(p), p.stateFile];
+    };
+    const defaultFake = plant(path.join(root, "private", "fake"));
+    const override = plant(path.join(root, "elsewhere"));
+
+    const a = await startServer({ PORT: "0", YARVIS_FAKE: "1" }, root);
+    cleanups.push(() => a.close());
+    expect(defaultFake.filter((f) => existsSync(f))).toEqual([]);
+
+    const b = await startServer(
+      { PORT: "0", YARVIS_FAKE: "1", YARVIS_PRIVATE_DIR: path.join(root, "elsewhere") },
+      root,
+    );
+    cleanups.push(() => b.close());
+    expect(override.filter((f) => existsSync(f))).toEqual(override);
   });
 });
 

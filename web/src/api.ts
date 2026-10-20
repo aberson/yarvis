@@ -6,6 +6,8 @@ import {
   type ApiErrorBody,
   type HealthResponse,
   type QuarantineItem,
+  type RefreshStarted,
+  type RefreshStatus,
   type Settings,
   type SettingsPatch,
   type SettingsResponse,
@@ -65,4 +67,15 @@ export const api = {
   patchTodo: (id: string, patch: TodoPatch) =>
     request<Todo>("PATCH", `/api/todos/${pathId(id)}`, patch),
   getQuarantine: () => request<QuarantineItem[]>("GET", "/api/quarantine"),
+  /** POST /api/refresh: 202 -> {started, jobId}; 409 (a job holds the lock) -> {started: false}. */
+  startRefresh: async (): Promise<{ started: true; jobId: string } | { started: false }> => {
+    try {
+      const body = await request<RefreshStarted>("POST", "/api/refresh");
+      return { started: true, jobId: body.jobId };
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) return { started: false };
+      throw err;
+    }
+  },
+  getRefreshStatus: () => request<RefreshStatus>("GET", "/api/refresh/status"),
 };

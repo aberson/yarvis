@@ -13,8 +13,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   acquireLock,
   EMPTY_LOCK_GRACE_MS,
-  LOCK_STALE_AFTER_MS,
   LockHeldError,
+  RELEASE_ATTEMPTS,
   type LockHandle,
 } from "../src/lock.js";
 import { tempPaths } from "./helpers.js";
@@ -99,16 +99,16 @@ describe("acquireLock", () => {
     expect(leftovers(file)).toEqual([path.basename(file)]);
   });
 
-  it("refuses a live holder younger than 15 min and reclaims one past the job ceiling", async () => {
+  it("a live holder is held at 16 min and stale at 18 min (15 min ceiling + 2 min grace, D19/D20)", async () => {
     const file = lockFile();
-    const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+    const t0 = Date.parse("2026-10-19T18:00:00.000Z");
+    const at = (minutes: number) => ({ now: () => new Date(t0 + minutes * 60_000) });
+    const live = writeRecord(file, process.pid, new Date(t0).toISOString());
 
-    const young = writeRecord(file, process.pid, ago(LOCK_STALE_AFTER_MS - 60_000));
-    await expect(acquireLock(file)).rejects.toBeInstanceOf(LockHeldError);
-    expect(readFileSync(file, "utf8")).toBe(young);
+    await expect(acquireLock(file, at(16))).rejects.toBeInstanceOf(LockHeldError);
+    expect(readFileSync(file, "utf8")).toBe(live);
 
-    writeRecord(file, process.pid, ago(LOCK_STALE_AFTER_MS + 60_000));
-    const handle = await acquireLock(file);
+    const handle = await acquireLock(file, at(18));
     expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ token: handle.record.token });
     await handle.release();
   });
@@ -150,5 +150,54 @@ describe("acquireLock", () => {
     const other = writeRecord(file, process.pid, handle.record.startedAt); // same pid + time
     await handle.release();
     expect(readFileSync(file, "utf8")).toBe(other);
+  });
+});
+
+describe("release on a transient Windows unlink failure", () => {
+  const eperm = () =>
+    Object.assign(new Error("EPERM: operation not permitted, unlink"), { code: "EPERM" });
+
+  it("retries the unlink and removes the lock", async () => {
+    const file = lockFile();
+    let calls = 0;
+    const handle = await acquireLock(file, {
+      unlink: async (f) => {
+        if (++calls <= 2) throw eperm();
+        unlinkSync(f);
+        await Promise.resolve();
+      },
+    });
+    await handle.release();
+    expect(calls).toBe(3);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("gives up after RELEASE_ATTEMPTS; only this process's leftover (same pid + token) is reclaimable", async () => {
+    const file = lockFile();
+    let calls = 0;
+    const handle = await acquireLock(file, {
+      unlink: () => {
+        calls++;
+        return Promise.reject(eperm());
+      },
+    });
+    await expect(handle.release()).rejects.toMatchObject({ code: "EPERM" });
+    expect(calls).toBe(RELEASE_ATTEMPTS);
+    const leftover = readFileSync(file, "utf8");
+
+    // The holder pid is alive (this process): a plain acquirer, or another token, is refused.
+    await expect(acquireLock(file)).rejects.toBeInstanceOf(LockHeldError);
+    await expect(
+      acquireLock(file, { ownLeftover: { ...handle.record, token: "someone-else" } }),
+    ).rejects.toBeInstanceOf(LockHeldError);
+    await expect(
+      acquireLock(file, { ownLeftover: handle.record, pid: process.pid + 1 }),
+    ).rejects.toBeInstanceOf(LockHeldError);
+    expect(readFileSync(file, "utf8")).toBe(leftover);
+
+    const next = await acquireLock(file, { ownLeftover: handle.record });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ token: next.record.token });
+    await next.release();
+    expect(leftovers(file)).toEqual([]);
   });
 });

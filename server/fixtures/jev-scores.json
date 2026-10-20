@@ -6,5 +6,21 @@
     "malicious": 0.01,
     "spam": 0.02,
     "action": 0.93
+  },
+  "gmail:19a0c0ffee000001": { "phishing": 0.02, "malicious": 0.01, "spam": 0.04, "action": 0.91 },
+  "gmail:19a0c0ffee000002": { "phishing": 0.06, "malicious": 0.03, "spam": 0.93, "action": 0.12 },
+  "gmail:19a0c0ffee000003": { "phishing": 0.01, "malicious": 0.01, "spam": 0.05, "action": 0.22 },
+  "gmail:19a0c0ffee000004": { "phishing": 0.97, "malicious": 0.81, "spam": 0.44, "action": 0.9 },
+  "wa:15555550123@s.whatsapp.net:3EB0FAKE000000000001": {
+    "phishing": 0.01,
+    "malicious": 0.01,
+    "spam": 0.01,
+    "action": 0.86
+  },
+  "wa:15555550123@s.whatsapp.net:3EB0FAKE000000000003": {
+    "phishing": 0.03,
+    "malicious": 0.02,
+    "spam": 0.08,
+    "action": 0.78
   }
 }

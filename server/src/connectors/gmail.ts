@@ -700,8 +700,14 @@ export interface GmailConnector {
   /**
    * Lists INBOX ids for `gmailQuery(cursor)` (all pages), then `messages.get` (format full) only
    * for ids whose Message id (`gmail:<hex>`) is not in `knownIds`, at most GET_CONCURRENCY at once.
+   * Aborting `signal` stops it scheduling further list/get calls (in-flight calls finish within
+   * their per-call timeout) and rejects with a GmailError.
    */
-  fetchSince(cursor: GmailCursor, knownIds: ReadonlySet<string>): Promise<GmailFetchResult>;
+  fetchSince(
+    cursor: GmailCursor,
+    knownIds: ReadonlySet<string>,
+    opts?: { signal?: AbortSignal },
+  ): Promise<GmailFetchResult>;
 }
 
 export interface GmailConnectorOptions {
@@ -713,17 +719,25 @@ export interface GmailConnectorOptions {
   pageSize?: number;
 }
 
-/** Runs `fn` over `items` with at most `limit` in flight; stops launching after a failure. */
+/**
+ * Runs `fn` over `items` with at most `limit` in flight; stops launching after a failure or once
+ * `signal` is aborted.
+ */
 async function mapLimit<T, R>(
   items: readonly T[],
   limit: number,
   fn: (item: T) => Promise<R>,
+  signal?: AbortSignal,
 ): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
   let failed = false;
   const worker = async (): Promise<void> => {
     while (!failed && next < items.length) {
+      if (signal?.aborted) {
+        failed = true;
+        throw cancelled();
+      }
       const i = next++;
       try {
         out[i] = await fn(items[i] as T);
@@ -736,6 +750,10 @@ async function mapLimit<T, R>(
   const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker);
   await Promise.all(workers);
   return out;
+}
+
+function cancelled(): GmailError {
+  return new GmailError("upstream", "Gmail fetch cancelled");
 }
 
 function isAuthFailure(err: unknown): boolean {
@@ -781,13 +799,15 @@ export function createGmailConnector(opts: GmailConnectorOptions): GmailConnecto
   }
 
   return {
-    async fetchSince(cursor, knownIds) {
+    async fetchSince(cursor, knownIds, fetchOpts = {}) {
+      const { signal } = fetchOpts;
       const q = gmailQuery(cursor);
       const api = await resolveApi();
       const ids: string[] = [];
       const seen = new Set<string>();
       let pageToken: string | undefined;
       do {
+        if (signal?.aborted) throw cancelled();
         const params: ListParams = { userId: "me", q, labelIds: ["INBOX"], maxResults: pageSize };
         if (pageToken) params.pageToken = pageToken;
         const res = await call("messages.list", (o) => api.users.messages.list(params, o));
@@ -800,12 +820,17 @@ export function createGmailConnector(opts: GmailConnectorOptions): GmailConnecto
         pageToken = res.data.nextPageToken ?? undefined;
       } while (pageToken);
       const fresh = ids.filter((hex) => !knownIds.has(gmailId(hex)));
-      const messages = await mapLimit(fresh, concurrency, async (hex) => {
-        const res = await call("messages.get", (o) =>
-          api.users.messages.get({ userId: "me", id: hex, format: "full" }, o),
-        );
-        return normalizeGmailMessage({ ...res.data, id: res.data.id ?? hex });
-      });
+      const messages = await mapLimit(
+        fresh,
+        concurrency,
+        async (hex) => {
+          const res = await call("messages.get", (o) =>
+            api.users.messages.get({ userId: "me", id: hex, format: "full" }, o),
+          );
+          return normalizeGmailMessage({ ...res.data, id: res.data.id ?? hex });
+        },
+        signal,
+      );
       return { messages, listed: ids.length, skippedCached: ids.length - fresh.length };
     },
   };

@@ -1,9 +1,11 @@
 // Cross-process refresh lock (plan §5, D19): `private/refresh.lock` holds `{pid, startedAt, token}`.
 // A live holder makes a second acquirer refuse with `LockHeldError` ("refresh already running"); a
-// lock is stale (reclaimed) when its pid is dead OR it is older than the 15 min job ceiling (§5, D19;
-// the age rule also frees a lock whose dead holder's pid was reused). `release()` removes the file
-// only while it still holds THIS acquisition's record. `runRefresh` (Step 6), `wa:link` and
-// `wa:chats` acquire it. Contended retries back off briefly (bounded well under a second).
+// lock is stale (reclaimed) when its pid is dead OR it is older than LOCK_STALE_AFTER_MS: the 15 min
+// job ceiling plus the 2 min abandon grace plus a small margin (§5, D19, D20; the age rule also frees
+// a lock whose dead holder's pid was reused). `release()` removes the file only while it still
+// holds THIS acquisition's record, retrying transient Windows unlink failures; a lock this process
+// failed to release can be reclaimed by this same process (`ownLeftover`). `runRefresh` (Step 6),
+// `wa:link` and `wa:chats` acquire it. Contended retries back off briefly (well under a second).
 //
 // Atomicity:
 // - Claim: the record is written to a unique temp file in the same directory, then hard-linked onto
@@ -19,11 +21,29 @@ import { link, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
+/** The refresh job ceiling (§4, D20): a job running this long ends `error` with "stage timeout". */
+export const JOB_CEILING_MS = 15 * 60_000;
+
 /**
- * The job ceiling (§4 D20, §5, D19): a lock older than this is stale even if its pid is alive.
- * Accepted risk (plan ceiling): a wa:link waiting more than 15 min on a QR scan can be taken over.
+ * After the ceiling, a job keeps the lock up to this long while its abandoned stage settles (an
+ * in-flight call finishes within its own timeout), so no new job overlaps it.
  */
-export const LOCK_STALE_AFTER_MS = 15 * 60_000;
+export const ABANDON_GRACE_MS = 2 * 60_000;
+
+/** Covers the few ms between taking the lock and arming the job ceiling timer. */
+const STALE_MARGIN_MS = 5_000;
+
+/**
+ * A lock older than the job ceiling plus the abandon grace (plus a margin) is stale even if its pid
+ * is alive (D19), so a lock is never reclaimed while its job may still hold it legitimately (just
+ * over 17 min). Accepted risk: a wa:link waiting longer than that on a QR scan can be taken over.
+ */
+export const LOCK_STALE_AFTER_MS = JOB_CEILING_MS + ABANDON_GRACE_MS + STALE_MARGIN_MS;
+
+/** release(): unlink attempts on a transient Windows error (EPERM/EBUSY/EACCES), backoff 25 ms x2. */
+export const RELEASE_ATTEMPTS = 5;
+const RELEASE_BACKOFF_MS = 25;
+const TRANSIENT_UNLINK = new Set(["EPERM", "EBUSY", "EACCES"]);
 
 /** An empty or unparseable lock younger than this is treated as held (a writer may be mid-way). */
 export const EMPTY_LOCK_GRACE_MS = 5_000;
@@ -50,7 +70,10 @@ export class LockHeldError extends Error {
 export interface LockHandle {
   readonly file: string;
   readonly record: LockRecord;
-  /** Removes the lock file if it still holds this acquisition's record; otherwise a no-op. */
+  /**
+   * Removes the lock file if it still holds this acquisition's record; otherwise a no-op. A
+   * transient unlink failure is retried RELEASE_ATTEMPTS times, then rethrown.
+   */
   release(): Promise<void>;
 }
 
@@ -58,6 +81,14 @@ export interface LockOptions {
   /** Defaults to `process.pid`. */
   pid?: number;
   now?: () => Date;
+  /**
+   * A record THIS process acquired but failed to release (its pid is alive, so it would otherwise
+   * be held until the age rule frees it). A lock holding exactly this record (same pid, same token)
+   * is reclaimed through the guarded tombstone path.
+   */
+  ownLeftover?: LockRecord | null;
+  /** The unlink used by release() (injectable so tests can simulate a Windows EPERM). */
+  unlink?: (file: string) => Promise<void>;
 }
 
 /** True when a process with this pid exists (EPERM means it exists but is not ours to signal). */
@@ -117,9 +148,13 @@ async function observe(file: string): Promise<Observed | null> {
   }
 }
 
-/** Stale when the holder pid is dead or the lock is past the job ceiling; unparseable past grace. */
-function isStale(lock: Observed, nowMs: number): boolean {
+/**
+ * Stale when the holder pid is dead, the lock is past LOCK_STALE_AFTER_MS, or it is this process's
+ * own unreleased leftover; unparseable past grace.
+ */
+function isStale(lock: Observed, nowMs: number, own?: LockRecord | null): boolean {
   if (lock.record) {
+    if (own && lock.record.pid === own.pid && lock.record.token === own.token) return true;
     if (nowMs - Date.parse(lock.record.startedAt) > LOCK_STALE_AFTER_MS) return true;
     return !isPidAlive(lock.record.pid);
   }
@@ -171,7 +206,7 @@ async function reclaim(file: string, opts: LockOptions): Promise<void> {
     // so a stale lock observed here is the one renamed below.
     const lock = await observe(file);
     if (!lock) return;
-    if (!isStale(lock, nowMs)) throw new LockHeldError(file, lock.record);
+    if (!isStale(lock, nowMs, ownLeftover(opts))) throw new LockHeldError(file, lock.record);
     const tomb = `${file}.${uniqueSuffix()}.stale`;
     try {
       await rename(file, tomb);
@@ -193,6 +228,12 @@ async function reclaim(file: string, opts: LockOptions): Promise<void> {
   }
 }
 
+/** The leftover only counts when it was written by this very process. */
+function ownLeftover(opts: LockOptions): LockRecord | null {
+  const own = opts.ownLeftover;
+  return own && own.pid === (opts.pid ?? process.pid) ? own : null;
+}
+
 /** Claim attempts; between them a 25-50 ms jittered pause (at most ~350 ms in total). */
 const MAX_ATTEMPTS = 8;
 const backoff = (): Promise<void> => sleep(25 + Math.floor(Math.random() * 26));
@@ -208,8 +249,20 @@ export async function acquireLock(file: string, opts: LockOptions = {}): Promise
         file,
         record,
         release: async () => {
-          const current = await readFile(file, "utf8").catch(() => null);
-          if (current === body) await unlink(file).catch(ignoreEnoent);
+          const remove = opts.unlink ?? unlink;
+          for (let attempt = 1; ; attempt++) {
+            const current = await readFile(file, "utf8").catch(() => null);
+            if (current !== body) return;
+            try {
+              await remove(file);
+              return;
+            } catch (err) {
+              const code = errCode(err) ?? "";
+              if (code === "ENOENT") return;
+              if (!TRANSIENT_UNLINK.has(code) || attempt >= RELEASE_ATTEMPTS) throw err;
+              await sleep(RELEASE_BACKOFF_MS * 2 ** (attempt - 1));
+            }
+          }
         },
       };
     }
@@ -217,7 +270,9 @@ export async function acquireLock(file: string, opts: LockOptions = {}): Promise
     if (attempt >= MAX_ATTEMPTS) throw new LockHeldError(file, holder?.record ?? null);
     if (holder) {
       const nowMs = (opts.now ?? (() => new Date()))().getTime();
-      if (!isStale(holder, nowMs)) throw new LockHeldError(file, holder.record);
+      if (!isStale(holder, nowMs, ownLeftover(opts))) {
+        throw new LockHeldError(file, holder.record);
+      }
       // Stale: reclaim it, or (another process holds the reclaim guard) let that reclaim finish.
       await reclaim(file, opts);
     }

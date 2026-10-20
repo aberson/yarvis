@@ -1,7 +1,7 @@
 // Shared types between server and web (plan §3.2, §3.4, §5, §6, §12.1).
 // Todo / QuarantineItem are DERIVED from the pinned header tuples in ./sheet.ts (never declared
-// separately), so a header column without a field cannot exist. RefreshStatus lands with the
-// pipeline (Step 6).
+// separately), so a header column without a field cannot exist. RefreshStatus is the §4 job
+// status shape served by GET /api/refresh/status.
 import type { ExtractionStatus, QuarantineColumn, TodoColumn, TodoStatus } from "./sheet.js";
 
 export type Source = "whatsapp" | "gmail";
@@ -154,6 +154,53 @@ export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 export interface ApiErrorBody {
   error: ApiErrorCode;
   message?: string;
+}
+
+/** The refresh stages, in run order (plan §4): whatsapp -> gmail -> jev -> extract -> sheets. */
+export const REFRESH_STAGES = ["whatsapp", "gmail", "jev", "extract", "sheets"] as const;
+export type RefreshStage = (typeof REFRESH_STAGES)[number];
+
+export const STAGE_STATES = ["pending", "running", "done", "error", "skipped"] as const;
+export type StageState = (typeof STAGE_STATES)[number];
+
+export const REFRESH_STATES = ["idle", "running", "done", "partial", "error"] as const;
+export type RefreshState = (typeof REFRESH_STATES)[number];
+
+/**
+ * One stage of a refresh job. `count` = items the stage processed (whatsapp/gmail: messages
+ * fetched; jev: messages scored; extract: extractions completed; sheets: rows upserted).
+ */
+export interface StageStatus {
+  state: StageState;
+  count: number;
+  /**
+   * A fixed, content-free phrase (server/src/pipeline/errors.ts): why an `error` stage failed, or
+   * the per-item failures of a `done` stage (e.g. "jev rejected 1 message"). Never message content,
+   * library error text or private/ values.
+   */
+  error?: string;
+}
+
+/** `GET /api/refresh/status` (plan §4, §6). */
+export interface RefreshStatus {
+  state: RefreshState;
+  stages: Record<RefreshStage, StageStatus>;
+  /** ISO 8601 UTC; null when idle. */
+  startedAt: string | null;
+  /** ISO 8601 UTC; null when idle or not yet finished. */
+  finishedAt: string | null;
+  /** A job-level failure outside any stage (e.g. invalid settings); absent otherwise. */
+  error?: string;
+}
+
+/** `POST /api/refresh` 202 body. */
+export interface RefreshStarted {
+  jobId: string;
+}
+
+/** `POST /api/refresh` 409 body (a job is running in this or another process, D19). */
+export interface RefreshConflict {
+  running: true;
 }
 
 /** Header every mutating request must carry (D22). */

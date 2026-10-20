@@ -1,14 +1,184 @@
 // Todos page (plan §5, G1, G3, P6): combined to-do list with source chips, a done checkbox
 // (PATCH /api/todos/:id), a hide-done toggle (GET /api/todos?status=open|all) and the "Open sheet"
-// link. The Refresh button + stage progress arrive with the pipeline (Step 6).
-import { useEffect, useRef, useState } from "react";
-import { isSheetIdConfigured, sheetUrl, type SettingsResponse, type Todo } from "@yarvis/shared";
+// link, and the Refresh button (POST /api/refresh) with per-stage progress and error text, polled
+// every 2 s while the job runs; a finished job re-reads the to-dos (Step 6, D13).
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  isSheetIdConfigured,
+  REFRESH_STAGES,
+  sheetUrl,
+  type RefreshStage,
+  type RefreshState,
+  type RefreshStatus,
+  type SettingsResponse,
+  type StageState,
+  type Todo,
+} from "@yarvis/shared";
 import { api } from "../api.js";
-import { usePirate } from "../i18n/strings.js";
+import { usePirate, type StringKey } from "../i18n/strings.js";
+import { pollRefreshStatus } from "../refresh-poll.js";
 import { formatDate, safeHref } from "../ui/format.js";
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+const STAGE_LABEL: Readonly<Record<RefreshStage, StringKey>> = {
+  whatsapp: "stageWhatsapp",
+  gmail: "stageGmail",
+  jev: "stageJev",
+  extract: "stageExtract",
+  sheets: "stageSheets",
+};
+
+const STAGE_STATE_LABEL: Readonly<Record<StageState, StringKey>> = {
+  pending: "statePending",
+  running: "stateRunning",
+  done: "stateDone",
+  error: "stateError",
+  skipped: "stateSkipped",
+};
+
+const JOB_LABEL: Readonly<Record<Exclude<RefreshState, "idle">, StringKey>> = {
+  running: "jobRunning",
+  done: "jobDone",
+  partial: "jobPartial",
+  error: "jobError",
+};
+
+type RefreshProblem = { kind: "start" | "status"; message: string } | { kind: "busy" };
+
+/** Refresh button + stage progress; `onFinished` runs when a job this page watched ends. */
+function RefreshPanel({ onFinished }: { onFinished: () => void }) {
+  const t = usePirate();
+  const [status, setStatus] = useState<RefreshStatus | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [problem, setProblem] = useState<RefreshProblem | null>(null);
+  const stopRef = useRef<(() => void) | null>(null);
+  // False once unmounted: a Refresh click that resolves afterwards must not start polling.
+  const mountedRef = useRef(false);
+  const onFinishedRef = useRef(onFinished);
+  onFinishedRef.current = onFinished;
+
+  const watch = useCallback(() => {
+    stopRef.current?.();
+    stopRef.current = pollRefreshStatus({
+      fetchStatus: api.getRefreshStatus,
+      onStatus: (s) => {
+        setStatus(s);
+        setProblem((p) => (p?.kind === "status" ? null : p));
+      },
+      onFinished: () => onFinishedRef.current(),
+      onError: (err) => setProblem({ kind: "status", message: errorText(err) }),
+    });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    mountedRef.current = true;
+    // Show the last job's result; resume watching a job that is still running.
+    api
+      .getRefreshStatus()
+      .then((s) => {
+        if (cancelled) return;
+        setStatus(s);
+        if (s.state === "running") watch();
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setProblem({ kind: "status", message: errorText(err) });
+      });
+    return () => {
+      cancelled = true;
+      mountedRef.current = false;
+      stopRef.current?.();
+    };
+  }, [watch]);
+
+  const start = async () => {
+    setStarting(true);
+    setProblem(null);
+    try {
+      const result = await api.startRefresh();
+      if (!mountedRef.current) return;
+      if (!result.started) setProblem({ kind: "busy" });
+      watch();
+    } catch (err) {
+      if (mountedRef.current) setProblem({ kind: "start", message: errorText(err) });
+    } finally {
+      if (mountedRef.current) setStarting(false);
+    }
+  };
+
+  const running = starting || status?.state === "running";
+  const shown = status !== null && status.state !== "idle" ? status : null;
+  const jobState = shown && shown.state !== "idle" ? shown.state : null;
+  return (
+    <div className="refresh" data-testid="refresh-panel">
+      <div className="row">
+        <button
+          type="button"
+          data-testid="refresh-button"
+          disabled={running}
+          onClick={() => void start()}
+        >
+          {running ? t.refreshing : t.refresh}
+        </button>
+        {jobState && (
+          <span
+            data-testid="refresh-state"
+            data-state={jobState}
+            className={jobState === "error" ? "error" : "muted"}
+          >
+            {t[JOB_LABEL[jobState]]}
+          </span>
+        )}
+      </div>
+      {problem?.kind === "busy" && (
+        <p className="muted" data-testid="refresh-busy">
+          {t.refreshAlreadyRunning}
+        </p>
+      )}
+      {problem && problem.kind !== "busy" && (
+        <p role="alert" className="error">
+          {problem.kind === "start" ? t.refreshStartError : t.refreshStatusError}: {problem.message}
+        </p>
+      )}
+      {shown && (
+        <ol className="stages" data-testid="refresh-stages">
+          {REFRESH_STAGES.map((name) => {
+            const stage = shown.stages[name];
+            return (
+              <li
+                key={name}
+                data-testid="refresh-stage"
+                data-stage={name}
+                data-state={stage.state}
+                className={`stage stage-${stage.state}`}
+              >
+                <span className="stage-name">{t[STAGE_LABEL[name]]}</span>
+                <span className="stage-state">{t[STAGE_STATE_LABEL[stage.state]]}</span>
+                {(stage.state === "done" || stage.state === "error") && (
+                  <span className="stage-count" data-testid="stage-count">
+                    {stage.count}
+                  </span>
+                )}
+                {stage.error && (
+                  <span className="error stage-error" data-testid="stage-error">
+                    {stage.error}
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      {shown?.error && (
+        <p className="error" data-testid="refresh-error">
+          {shown.error}
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function TodosPage({ settings }: { settings: SettingsResponse | null }) {
@@ -21,6 +191,9 @@ export function TodosPage({ settings }: { settings: SettingsResponse | null }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState<ReadonlySet<string>>(new Set());
+  // Bumped when a refresh job finishes: re-reads the to-dos (the server dropped its read cache).
+  const [reloadKey, setReloadKey] = useState(0);
+  const reload = useCallback(() => setReloadKey((k) => k + 1), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,7 +211,7 @@ export function TodosPage({ settings }: { settings: SettingsResponse | null }) {
     return () => {
       cancelled = true;
     };
-  }, [hideDone]);
+  }, [hideDone, reloadKey]);
 
   const toggleDone = async (todo: Todo) => {
     const status = todo.status === "done" ? "open" : "done";
@@ -68,6 +241,7 @@ export function TodosPage({ settings }: { settings: SettingsResponse | null }) {
   return (
     <section>
       <h1>{t.navTodos}</h1>
+      <RefreshPanel onFinished={reload} />
       <div className="row toolbar">
         <button
           type="button"

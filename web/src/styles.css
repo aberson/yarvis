@@ -147,3 +147,36 @@ table.quarantine .num {
 table.quarantine tr.released {
   color: #5b6475;
 }
+.refresh {
+  margin-bottom: 12px;
+}
+.stages {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 13px;
+}
+.stage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+}
+.stage-name {
+  font-weight: 600;
+}
+.stage-count {
+  color: #5b6475;
+}
+.stage-count::before {
+  content: "(";
+}
+.stage-count::after {
+  content: ")";
+}
+.stage-error {
+  flex-basis: 100%;
+}

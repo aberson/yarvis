@@ -1,6 +1,7 @@
 // `yarvis` verb dispatcher (plan §5): `npm run yarvis -- <verb>`. Verbs are thin wrappers over the
 // server modules; each lands with its own step, and until then it exits non-zero with
-// "not yet implemented". Built so far: gmail:auth (Step 4), wa:link and wa:chats (Step 5).
+// "not yet implemented". Built so far: gmail:auth (Step 4), wa:link and wa:chats (Step 5),
+// refresh (Step 6).
 import { loadPrivateEnv } from "./config/env.js";
 import { resolvePaths, type Paths } from "./config/paths.js";
 import {
@@ -11,6 +12,7 @@ import {
   type GmailAuthDeps,
 } from "./connectors/gmail.js";
 import type { WaDeps } from "./connectors/whatsapp.js";
+import type { PipelineSeams } from "./pipeline/seams.js";
 import { isMainModule } from "./util/is-main.js";
 
 export interface Verb {
@@ -36,6 +38,11 @@ export interface CliDeps {
    * YARVIS_FAKE=1) lazily, so verbs other than wa:* never load Baileys.
    */
   wa?: WaDeps;
+  /**
+   * `refresh` seams. Unset by default: refresh-cli.ts wires the real clients (all five fakes when
+   * YARVIS_FAKE=1) lazily, so other verbs never load them.
+   */
+  seams?: PipelineSeams;
 }
 
 export function defaultCliDeps(): CliDeps {
@@ -88,7 +95,13 @@ export const VERBS: readonly Verb[] = [
     usage: "doctor",
     summary: "Probe each configured seam (status only, never private values)",
   },
-  { name: "refresh", usage: "refresh", summary: "Run one refresh from the terminal" },
+  {
+    name: "refresh",
+    usage: "refresh",
+    summary: "Run one refresh from the terminal (exit 0 only when every stage is done)",
+    run: async (args, io, deps) =>
+      (await import("./refresh-cli.js")).runRefreshVerb(args, io, deps),
+  },
 ];
 
 export function helpText(): string {

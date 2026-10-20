@@ -2,6 +2,7 @@
 // FakeWhatsApp socket seam injected (plan §5, Step M3; D19, D23).
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as realSleep } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCli, type CliIo } from "../src/cli.js";
 import {
@@ -38,18 +39,30 @@ function setup(scripts?: readonly FakeWaScript[]) {
   return { paths, fake, io: capture() };
 }
 
+/**
+ * Waits for real I/O (lazy import, lock file, cache writes) WITHOUT moving fake time, bounded in REAL
+ * time: a fixed number of event-loop turns can elapse before a slow fs completion arrives under load.
+ * node:timers/promises is not faked (toFake covers the global setTimeout/clearTimeout only).
+ */
+async function untilRealIo(done: () => boolean, timeoutMs = 10_000): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  while (!done() && performance.now() < deadline) await realSleep(2);
+}
+
 const QR_STEP = { event: "connection.update", payload: { qr: "2@synthetic-pairing-ref" } } as const;
 const CREDS_STEP = { event: "creds.update", payload: {} } as const;
 
 /**
  * Drives the drain window under fake setTimeout while letting real fs I/O (the lock file) run:
- * yields a real macrotask, then advances fake time, until the command settles.
+ * yields a short real sleep, then advances fake time, until the command settles.
  */
 async function settleWithFakeTime<T>(p: Promise<T>): Promise<T> {
   let done = false;
   void p.finally(() => (done = true)).catch(() => undefined);
-  for (let i = 0; i < 400 && !done; i++) {
-    await new Promise((r) => setImmediate(r));
+  // Bounded in REAL time, not event-loop turns (see untilRealIo).
+  const deadline = performance.now() + 15_000;
+  while (!done && performance.now() < deadline) {
+    await realSleep(1);
     await vi.advanceTimersByTimeAsync(500);
   }
   return p;
@@ -159,9 +172,7 @@ describe("yarvis wa:chats", () => {
     const run = runCli(["wa:chats"], io, { paths, wa: fake.deps }).then((c) => (code = c));
 
     // Let the real I/O before the session (lazy import, lock file) finish without moving fake time.
-    for (let i = 0; i < 1000 && fake.sockets.length === 0; i++) {
-      await new Promise((r) => setImmediate(r));
-    }
+    await untilRealIo(() => fake.sockets.length > 0);
     expect(fake.sockets).toHaveLength(1);
     // From socket creation, step fake time in 100 ms slices and record when the runner resolves.
     // The budget is the 8 s quiet window plus the 2 s group-query grace.
@@ -173,9 +184,7 @@ describe("yarvis wa:chats", () => {
       elapsedMs += 100;
     }
     // Fake time is now frozen at the budget: only real I/O (lock release) may still complete.
-    for (let i = 0; i < 1000 && code === undefined; i++) {
-      await new Promise((r) => setImmediate(r));
-    }
+    await untilRealIo(() => code !== undefined);
     expect(code).toBe(0);
     expect(elapsedMs).toBeGreaterThanOrEqual(QUIET_WINDOW_MS);
     expect(fake.sockets[0]?.endCalls).toBe(1);

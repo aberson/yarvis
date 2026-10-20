@@ -14,13 +14,11 @@ import { healthRouter } from "./routes/health.js";
 import { settingsRouter } from "./routes/settings.js";
 import { TodosCache, todosRouter } from "./routes/todos.js";
 import { quarantineRouter } from "./routes/quarantine.js";
-import {
-  createSheetsStore,
-  googleSheetsTarget,
-  SheetsError,
-  type SheetsStore,
-} from "./connectors/sheets.js";
+import { refreshRouter } from "./routes/refresh.js";
+import { SheetsError, type SheetsStore } from "./connectors/sheets.js";
 import { createFakeSheets } from "./fakes/sheets.js";
+import { RefreshRunner } from "./pipeline/job.js";
+import { defaultSeams, realSheetsStore, type PipelineSeams } from "./pipeline/seams.js";
 
 export interface AppDeps {
   paths: Paths;
@@ -41,6 +39,13 @@ export interface AppDeps {
   /** Todos read cache TTL (default 10 s) and clock, injectable for tests. */
   todosCacheTtlMs?: number;
   now?: () => number;
+  /**
+   * The refresh job's external seams (plan §5). Default: all five fakes in fake mode (sharing the
+   * app's Sheets store), else the real clients. Ignored when `refreshRunner` is given.
+   */
+  seams?: PipelineSeams;
+  /** The refresh job runner; default one built over `seams`. */
+  refreshRunner?: RefreshRunner;
 }
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -105,15 +110,21 @@ const errorHandler: ErrorRequestHandler = (err: unknown, _req, res, next) => {
 };
 
 export function defaultSheetsStore(deps: Pick<AppDeps, "paths" | "fake">): SheetsStore {
-  return deps.fake
-    ? createFakeSheets().store
-    : createSheetsStore({ target: googleSheetsTarget(deps.paths) });
+  return deps.fake ? createFakeSheets().store : realSheetsStore(deps.paths);
 }
 
 export function createApp(deps: AppDeps): express.Express {
   const sheets = deps.sheets ?? defaultSheetsStore(deps);
   const now = deps.now ?? Date.now;
   const todosCache = new TodosCache(sheets, deps.todosCacheTtlMs, now);
+  const refresh =
+    deps.refreshRunner ??
+    new RefreshRunner({
+      paths: deps.paths,
+      ...(deps.seams ?? defaultSeams({ paths: deps.paths, fake: deps.fake, sheets })),
+    });
+  // A finished job changed the sheet: the next GET /api/todos must re-read it (D22).
+  refresh.onFinished(() => todosCache.invalidate());
   const app = express();
   app.disable("x-powered-by");
   const sink = deps.accessLog ?? (process.env.VITEST ? false : (line: string) => console.log(line));
@@ -126,6 +137,7 @@ export function createApp(deps: AppDeps): express.Express {
     todosRouter({ store: sheets, cache: todosCache, nowIso: () => new Date(now()).toISOString() }),
   );
   app.use(quarantineRouter({ store: sheets }));
+  app.use(refreshRouter({ runner: refresh }));
   app.use((_req, res) => {
     sendError(res, "not_found");
   });
