@@ -889,7 +889,7 @@ Only Steps 9–12 are the selected automated S1 queue; M7–M8 are attended acce
 - **Depends on:** 10
 
 ### Step 12: Prove the wired preparation journey and document recovery
-- **Status:** PENDING
+- **Status:** DONE (2026-10-21)
 - **Problem:** Supply a reproducible end-to-end smoke and live acceptance instructions for the implemented S1 journey.
 - **Type:** code
 - **Issue:** #25

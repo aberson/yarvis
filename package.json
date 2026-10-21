@@ -26,7 +26,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "e2e": "playwright test -c web/playwright.config.ts",
-    "smoke": "tsx server/scripts/smoke.ts"
+    "smoke": "tsx server/scripts/smoke.ts",
+    "smoke:assistant": "tsx server/scripts/assistant-smoke.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

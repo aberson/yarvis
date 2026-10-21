@@ -158,7 +158,12 @@ function PacketEditor({ initial }: { initial: PreparationPacket }) {
       dirty && currentLocation.pathname !== nextLocation.pathname,
   );
 
-  async function save(state: PacketState): Promise<void> {
+  /**
+   * `target` is the state to save: an explicit "Mark handled" / "Reopen" passes it, a plain Save
+   * passes "keep" (the saved state). After re-basing onto our own lost-but-committed save, "keep"
+   * follows THAT save's state, so a lost "Mark handled" is never silently reopened by a later Save.
+   */
+  async function save(target: PacketState | "keep"): Promise<void> {
     if (saving || conflict) return;
     if (!editIsValid(edit)) {
       setSaveError(t.prepSaveInvalid);
@@ -168,6 +173,7 @@ function PacketEditor({ initial }: { initial: PreparationPacket }) {
     setSaving(true);
     setSaveError(null);
     let base = saved;
+    let state = target === "keep" ? saved.state : target;
     try {
       // At most one silent re-base: when the 409 is our own earlier, unacknowledged save.
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -201,6 +207,7 @@ function PacketEditor({ initial }: { initial: PreparationPacket }) {
             unacked.current = null;
             base = current;
             setSaved(current);
+            if (target === "keep") state = current.state;
             continue;
           } else if (current) {
             setConflict(current);
@@ -463,7 +470,7 @@ function PacketEditor({ initial }: { initial: PreparationPacket }) {
           type="button"
           data-testid="preparation-save"
           disabled={locked || !dirty}
-          onClick={() => void save(saved.state)}
+          onClick={() => void save("keep")}
         >
           {saving ? t.prepSaving : t.prepSave}
         </button>

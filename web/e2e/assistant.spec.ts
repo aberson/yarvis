@@ -8,6 +8,8 @@
 // rendering of the packet page. Step 11 adds editing: the whole flow at 390 px (briefing -> prepare
 // -> edit -> leave prompt -> save -> handled -> list -> reopen), a stale second tab's 409 with local
 // edits kept, failed saves keeping local text, the reload warning and the list's limit notice.
+// Step 12 adds the lost-save guards: a genuine second-tab save still conflicts while this tab has a
+// pending lost save, and a lost "Mark handled" is not silently reopened by the next plain Save.
 import { expect, test, type Page, type Request } from "@playwright/test";
 import type { AssistantRun, Briefing, BriefingItem, PreparationPacket } from "@yarvis/shared";
 import { en } from "../src/i18n/strings.js";
@@ -762,4 +764,130 @@ test("Leave without saving proceeds and discards edits; a lost save that committ
   await expect(page.getByTestId("preparation-status")).toHaveText(en.prepSaved);
   await page.reload();
   await expect(page.getByTestId("preparation-draft")).toHaveValue("First edit, then more");
+});
+
+// ---------------------------------------------------------------------------------------------
+// Step 12 carry-forward (Step 11 review): the lost-save re-base must never swallow a genuine second
+// tab's save, and a lost "Mark handled" must not be silently reopened by the next plain Save.
+
+/** Counts the PATCH requests `page` sends from now on. */
+function countPatches(page: Page): () => number {
+  let n = 0;
+  page.on("request", (r) => {
+    if (r.method() === "PATCH") n++;
+  });
+  return () => n;
+}
+
+/** PATCHes on `page` reach the server (`commit`) or not, and the browser never sees the answer. */
+async function loseNextPatch(page: Page, commit: boolean): Promise<void> {
+  await page.route("**/api/assistant/preparations/*", async (route) => {
+    if (route.request().method() !== "PATCH") return route.continue();
+    if (commit) await route.fetch();
+    return route.abort("connectionreset");
+  });
+}
+
+test("a pending lost save never hides a second tab's save at the next revision (content guard)", async ({
+  page,
+  context,
+}) => {
+  const url = await prepareSeeded(page, 23);
+  const tabB = await context.newPage();
+  await tabB.goto(url);
+  await expect(tabB.getByTestId("preparation")).toHaveAttribute("data-revision", "1");
+
+  // Tab A's save never reaches the server: it stays pending (unacknowledged) at base revision 1.
+  await loseNextPatch(page, false);
+  await page.getByTestId("preparation-draft").fill("Tab A lost text");
+  await page.getByTestId("preparation-save").click();
+  await expect(page.getByTestId("preparation-save-error")).toBeVisible();
+  await page.unroute("**/api/assistant/preparations/*");
+
+  // Tab B genuinely saves revision 2 (exactly base + 1, same open state, different content).
+  await tabB.getByTestId("preparation-draft").fill("Tab B real save");
+  await tabB.getByTestId("preparation-save").click();
+  await expect(tabB.getByTestId("preparation")).toHaveAttribute("data-revision", "2");
+
+  // Tab A's next Save must surface the conflict, not re-base over tab B's work: exactly ONE PATCH
+  // (the refused one). A broken guard would send a second, re-based PATCH that overwrites tab B.
+  await page.getByTestId("preparation-draft").fill("Tab A lost text, more");
+  const patches = countPatches(page);
+  await page.getByTestId("preparation-save").click();
+  await expect(page.getByTestId("preparation-conflict")).toBeVisible();
+  await expect(page.getByTestId("preparation")).toHaveAttribute("data-revision", "1");
+  expect(patches()).toBe(1);
+  await expect(page.getByTestId("preparation-theirs-draft")).toHaveText("Tab B real save");
+  await expect(page.getByTestId("preparation-draft")).toHaveValue("Tab A lost text, more");
+  await tabB.reload();
+  await expect(tabB.getByTestId("preparation")).toHaveAttribute("data-revision", "2");
+  await expect(tabB.getByTestId("preparation-draft")).toHaveValue("Tab B real save");
+  await tabB.close();
+});
+
+test("a committed lost save never hides a second tab's later saves with the same text (revision guard)", async ({
+  page,
+  context,
+}) => {
+  const url = await prepareSeeded(page, 24);
+
+  // Tab A's save commits revision 2, but its response is lost.
+  await loseNextPatch(page, true);
+  await page.getByTestId("preparation-draft").fill("Shared words");
+  await page.getByTestId("preparation-save").click();
+  await expect(page.getByTestId("preparation-save-error")).toBeVisible();
+  await page.unroute("**/api/assistant/preparations/*");
+
+  // Tab B (opened on revision 2) saves twice, ending on the same text: revision 4.
+  const tabB = await context.newPage();
+  await tabB.goto(url);
+  await expect(tabB.getByTestId("preparation")).toHaveAttribute("data-revision", "2");
+  await tabB.getByTestId("preparation-draft").fill("Tab B interim");
+  await tabB.getByTestId("preparation-save").click();
+  await expect(tabB.getByTestId("preparation")).toHaveAttribute("data-revision", "3");
+  await tabB.getByTestId("preparation-draft").fill("Shared words");
+  await tabB.getByTestId("preparation-save").click();
+  await expect(tabB.getByTestId("preparation")).toHaveAttribute("data-revision", "4");
+
+  // Same content as tab A's lost save, but not one revision on: a genuine conflict, exactly ONE
+  // PATCH (a broken guard would re-base onto revision 4 and send a second PATCH writing revision 5).
+  await page.getByTestId("preparation-draft").fill("Shared words, plus tab A");
+  const patches = countPatches(page);
+  await page.getByTestId("preparation-save").click();
+  await expect(page.getByTestId("preparation-conflict")).toBeVisible();
+  await expect(page.getByTestId("preparation")).toHaveAttribute("data-revision", "1");
+  expect(patches()).toBe(1);
+  await expect(page.getByTestId("preparation-draft")).toHaveValue("Shared words, plus tab A");
+  await tabB.reload();
+  await expect(tabB.getByTestId("preparation")).toHaveAttribute("data-revision", "4");
+  await tabB.close();
+});
+
+test("a lost 'Mark handled' that committed stays handled through the next plain Save", async ({
+  page,
+}) => {
+  const url = await prepareSeeded(page, 25);
+  const view = page.getByTestId("preparation");
+
+  // Mark handled commits revision 2 (handled), but the browser never sees the answer.
+  await loseNextPatch(page, true);
+  await page.getByTestId("preparation-toggle-state").click();
+  await expect(page.getByTestId("preparation-save-error")).toBeVisible();
+  await expect(view).toHaveAttribute("data-state", "open");
+  await page.unroute("**/api/assistant/preparations/*");
+
+  // A plain Save of newer edits re-bases onto the committed save and keeps it handled.
+  await page.getByTestId("preparation-draft").fill("Edited after the lost handled save");
+  const saved = page.waitForResponse((r) => isPatch(r) && r.status() === 200);
+  await page.getByTestId("preparation-save").click();
+  const body = (await (await saved).json()) as { packet: PreparationPacket };
+  expect(body.packet.state).toBe("handled");
+  await expect(view).toHaveAttribute("data-revision", "3");
+  await expect(view).toHaveAttribute("data-state", "handled");
+  await expect(page.getByTestId("preparation-conflict")).toHaveCount(0);
+  await page.goto(url);
+  await expect(page.getByTestId("preparation")).toHaveAttribute("data-state", "handled");
+  await expect(page.getByTestId("preparation-draft")).toHaveValue(
+    "Edited after the lost handled save",
+  );
 });

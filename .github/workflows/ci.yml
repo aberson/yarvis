@@ -82,3 +82,6 @@ jobs:
       - run: npm test
       - run: npm run e2e
       - run: npm run smoke
+      # S1 assistant journey (plan Step 12): real app/router/service/SQLite, fake composer + Sheets,
+      # create/edit/close/restart/reopen plus log-privacy and a no-mocks SQLite check.
+      - run: npm run smoke:assistant

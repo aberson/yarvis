@@ -1,7 +1,7 @@
 // README (plan Step 8): carries every §10 "How to Run" command verbatim and the §8 recovery
 // commands. The commands are extracted from docs/plans/master_plan.md at test time (the plan is
 // their one source), and every npm script the README names must exist in the root package.json.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { REPO_ROOT } from "../src/config/paths.js";
@@ -82,5 +82,12 @@ describe("README.md", () => {
   it("documents the Briefing landing route and its stopped-server backup", () => {
     expect(readme).toContain("`/` redirects to `/briefing`");
     expect(readme).toContain("private/assistant.sqlite");
+  });
+
+  it("documents the S1 assistant gate, recovery rules and the live acceptance script (Step 12)", () => {
+    expect(readme).toContain("npm run smoke:assistant");
+    expect(readme).toContain("Never delete the database");
+    expect(readme).toContain("docs/acceptance/s1.md");
+    expect(existsSync(path.join(REPO_ROOT, "docs", "acceptance", "s1.md"))).toBe(true);
   });
 });

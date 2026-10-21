@@ -142,6 +142,7 @@ describe(".github/workflows/ci.yml", () => {
       "npm test",
       "npm run e2e",
       "npm run smoke",
+      "npm run smoke:assistant",
     ];
     expect(runs.filter((r) => gate.includes(r))).toEqual(gate);
   });
