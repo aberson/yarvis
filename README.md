@@ -17,6 +17,17 @@ generating model.
 > shortcut. 453 tests passing, 0 type errors, 0 lint violations. Remaining operator steps M5–M6 are in
 > [docs/plans/master_plan.md](docs/plans/master_plan.md).
 
+## Next: personal briefing and preparation
+
+S1 is planned and reviewed, not yet built: “brief me, then help me handle one request” with
+editable response drafts and checklists; sending remains manual. See the
+[proposal](docs/plans/s1-assistant-proposal.html), [review](docs/plans/s1-plan-review.md), and
+[master plan](docs/plans/master_plan.md) (Steps 9–12, followed by live acceptance M7–M8).
+S2 project delegation is deferred until Ambition/Calibration and Forge finish their current work;
+the [coordination prompt](docs/plans/s2-coordination-prompt.md) and
+[integration agreement](docs/plans/s2-integration-agreement.md) define the intended ownership.
+The optional experiment bench stays in the backlog.
+
 ## Stack
 
 | Layer | Tool | Why |

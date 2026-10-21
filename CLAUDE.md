@@ -99,7 +99,9 @@ launcher: `scripts/launch.ps1` (shortcut via `scripts/install-shortcut.ps1`; kee
 
 ## Current state
 
-Phase 1.1 complete (2026-10-20) — running live on real Gmail, WhatsApp (4-chat allowlist), Jev and the Google Sheet; M1-M4 done; Y.A.R.V.I.S. HUD theme, 10 logos, Controls page, Desktop shortcut (453 vitest + 10 e2e). Open: M5 (#13) two-day observation, M6 (#14) publish check, #18 WhatsApp history backfill. Next: explore the next functionality slice.
+Phase 1.1 complete (2026-10-20) — running live on real Gmail, WhatsApp (4-chat allowlist), Jev and the Google Sheet; M1-M4 done; Y.A.R.V.I.S. HUD theme, 10 logos, Controls page, Desktop shortcut (453 vitest + 10 e2e, last implementation baseline). Open: M5 (#13) two-day observation, M6 (#14) publish check, #18 WhatsApp history backfill.
+
+Next: S1 personal briefing + editable response drafts/checklists, planned and independently reviewed but not built. Canonical scope is master plan Phase 2 / S1, Steps 9–12; M7–M8 are separate live acceptance. Run scoped repo-sync before build-phase; do not dispatch the historical master indiscriminately. S1 does not send messages or execute project work. S2 is deferred pending the Ambition/Calibration + Forge handback; ownership and proposed contracts live in `docs/plans/s2-integration-agreement.md`, with the other-window prompt in `docs/plans/s2-coordination-prompt.md`. S3 experiment bench is backlog only. See `docs/plans/s1-plan-review.md` and `docs/plans/s1-assistant-proposal.html` for readiness and decision provenance.
 
 ## Environment requirements
 

@@ -12,3 +12,4 @@ coverage/
 *.log
 .env
 .plan-expedite-state*
+.claude/task-state/

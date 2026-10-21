@@ -1,10 +1,16 @@
-# Yarvis — master plan (v0)
+# Yarvis — master plan
+
+Current direction (2026-10-20): S1 personal briefing and preparation, S2 delegated project work through Yarvis → Ambition/Calibration → Forge, S3 optional experiment bench backlog. The implemented v0 baseline below remains historical/current behavior until the new steps ship. Selected implementation scope: Steps 9–12 plus live checks M7–M8 in **Phase 2 / S1**; S2 is an integration agreement, not an executable build queue. No S1 implementation has started.
 
 Status: Phase 1 automated build COMPLETE (Steps 1-8 DONE 2026-10-19, issues #2-#8 and #15 closed); Phase 1.1 live bring-up + polish COMPLETE (M1-M4 DONE 2026-10-20, #9-#12); M5-M6 pending. Written 2026-10-19 by `/plan-init`.
 
 ## 1. What This Is
 
-Proposal: https://claude.ai/artifact/6EzZKWyAHGCWyaM5mb5M1f (standalone copy: `docs/proposals/yarvis-proposal.html`; decision IDs in §12.5)
+Objective: evolve the working local message-to-task application into a customized personal assistant. First deliver “brief me, then help me handle one request”: an evidence-linked briefing followed by an editable response draft and checklist that survive restart. Later, make Yarvis the phone-friendly front door for approved project work, reusing Ambition/Calibration and Forge. Pocket Relay may be absorbed; completing it as a separate product is not a dependency.
+
+Proposal: [s1-assistant-proposal.html](s1-assistant-proposal.html) (S1 publication 1). Progress: [../build-progress.html](../build-progress.html). S2 ownership and acceptance agreement: [s2-integration-agreement.md](s2-integration-agreement.md). The following v0 specification remains the baseline; Phase 2 explicitly overrides only the stated scope limits.
+
+Historical v0 proposal: https://claude.ai/artifact/6EzZKWyAHGCWyaM5mb5M1f (standalone copy: `docs/proposals/yarvis-proposal.html`; decision IDs in §12.5)
 
 Yarvis is a single-user, local home assistant in the Jarvis style (with an optional pirate-mode
 toggle). v0 does one job: it pulls messages from the operator's personal **WhatsApp** (allowlisted
@@ -740,6 +746,210 @@ After all Automated Steps complete, the orchestrator prints: **Please run M1 nex
 
 ---
 
+## Phase 2 / S1 — Brief me, then help me handle one request
+
+**Status:** PLANNED. Operator selected the journey, drafts/checklists first, and Yarvis as the future phone front door. Technical defaults D42–D48 remain visible in the proposal. This section is the canonical S1 implementation plan; the S2 agreement carries future requirements only. Step numbers continue after completed Steps 1–8; M5/M6 and issue #18 remain open baseline work, not silently completed or renamed.
+
+### S1.1 What this feature does
+
+From the existing Desktop shortcut, see a saved briefing of open, screened message tasks; choose a task, prepare a response draft and checklist, edit/save it, mark it handled when appropriate, and reopen the same work after restarting. This serves the existing single operator. The first operations workflow is preparation for a message request. Generated drafts are never sent by this phase.
+
+### S1.2 Existing context
+
+- `scripts/launch.ps1` opens `/` at web port 5173 after starting `npm run dev`; `web/src/App.tsx` currently redirects `/` to `/todos`. Make `/briefing` the new landing route and preserve `/todos`, `/quarantine`, `/controls`, `/apps` and `/settings` behavior.
+- `server/src/index.ts` creates the Express application, `TodosCache`, and `RefreshRunner`; the server binds loopback in `main.ts`. Continue the same Node/TypeScript/React architecture and HTTP guards.
+- `shared/src/sheet.ts` owns the 13-column Todo schema, including `original_text`. `routes/todos.ts` exports `visibleTodos`, which excludes currently quarantined messages. Reuse this filtering rule and read the Sheets store directly for a new snapshot, rather than adding a raw-message endpoint or reading the JSONL cache for composition.
+- `server/src/ai/extract.ts` already exports `runClaude(prompt, opts)` and `escapeUntrusted`; `runClaude` isolates subscription-authenticated, tool-free CLI calls, returns a ClaudeRunResult with stdout/stderr/exitCode/timedOut/error, handles timeout, and kills the process tree. Reuse it unchanged from a new composer. Do not relax the existing extractor or reinterpret its 0–3 action-array format as a response draft.
+- `pipeline/job.ts` and `pipeline/activity.ts` keep refresh presentation state in memory. New assistant runs get their own durable records; this phase does not claim to make the whole legacy refresh runner durable.
+- Local Node observed: 24.14.0. An in-memory `node:sqlite` probe succeeded (SQLite 3.51.2), with Node's experimental-feature warning. CI already selects Node 24. No live accounts were exercised during planning.
+
+### S1.3 Scope
+
+In: on-demand, persisted briefing snapshots over the existing Gmail/WhatsApp task rows; one preparation packet per selected Todo; bounded model composition; editable response/checklist; optimistic save conflicts; explicit handled status; restart recovery; desktop and narrow-screen layout; fake-mode integration and live acceptance.
+
+Out of S1: external sending, calendar writes, purchases, autonomous execution, free-form shell/browser tools, project crawling, conversational memory, new connectors, scheduled/background wakeups, phone connectivity/authentication, public hosting, arbitrary-project builds, model comparisons. Browser polling of a user-started bounded job is not an always-on service. Scheduling is a later scoped extension after this journey passes, not a hidden S1 deliverable. The existing Refresh button remains a separate explicit action; generating a briefing does not silently fetch mail or WhatsApp history.
+
+S2 is selected direction but deferred implementation. S3 is backlog only. Keep source IDs, timestamps, composer model and prompt version for ordinary traceability; do not build an experiment framework in S1.
+
+### S1.4 Impact analysis (producer-verified)
+
+All paths are repo-relative. New paths listed below are planned outputs, not existing modules. Searches cover `server`, `shared`, `web` TypeScript source/tests, excluding generated `dist`.
+
+| File | Change Type | Reason | Verified |
+|---|---|---|---|
+| `server/src/index.ts` | extend | Optional assistant service injection and new routers; existing factory signature remains compatible | `rg 'AppDeps|createApp\('`: producer plus `server/src/main.ts`, tests `access-log`, `guard`, `refresh-routes`, `refresh`, `settings`, `status-routes`, `todos-routes`; preserve all existing callers and their temp private dirs |
+| `server/src/main.ts` | extend | Wire assistant recovery and close lifecycle into existing start/close | Read `StartedServer`, `startServer`, close callback; `server/test/main.test.ts` and Playwright server lifecycle are regression consumers |
+| `shared/src/index.ts` | extend | Export new assistant types | Existing barrel exports inspected; additive module, existing types unchanged |
+| `shared/src/types.ts`, `server/src/http.ts` | extend | Error codes `assistant_busy` (409), `revision_conflict` (409), `assistant_unavailable` (503), `source_unavailable` (503) | `rg 'ApiErrorCode|API_ERROR_CODES|ApiErrorBody'` found exactly `shared/src/types.ts`, `server/src/http.ts`, `web/src/api.ts`; exhaustive STATUS map must be extended |
+| `web/src/api.ts`, `web/src/App.tsx` | extend | Typed assistant API, Briefing/Preparation navigation and landing page | Read API object and shell route table; `web/e2e/smoke.spec.ts` and `sheets.spec.ts` cover existing navigation/flows |
+| `web/src/i18n/strings.ts`, `web/src/styles.css` | extend | English/pirate labels and responsive forms using current theme | Existing UI consumers import the string table; preserve key parity and existing styling, test through e2e |
+| `package.json`, `package-lock.json`, `README.md`, `CLAUDE.md` | modify | Declare Node 24.14.x minimum within major 24, new smoke command, document implemented behavior when built | Root engines currently >=20.19; installed Node 24.14.0; `.github/workflows/ci.yml` uses 24; docs/readme test must reflect new runtime |
+| `.github/workflows/ci.yml`, `server/test/ci-workflow.test.ts` | extend | Include assistant smoke gate with existing leak checks intact | Read workflow; existing CI test and `server/scripts/smoke.ts` remain compatibility gates |
+| Existing tests listed above; new assistant tests | extend | Regression coverage for entry point, contracts and isolation | `rg --files server/test web/e2e` verified test locations; no production data in fixtures |
+
+No changes to `Paths`, `Settings`, `SettingsPatch`, `Todo`, `TodoPatch`, `RefreshStatus`, `RefreshRunner` public signatures, or Sheet headers. Compute the new database and lock paths from `Paths.privateDir` in the new store module. `runClaude` signature remains unchanged; existing callers are `ClaudeExtractor` in `extract.ts` and `server/test/extract.test.ts`. New composer calls it as an additional consumer. `visibleTodos` is reused unchanged. Existing settings, launcher and connector scopes remain compatible.
+
+### S1.5 New components and contracts
+
+**Storage.** `server/src/assistant/store.ts` owns SQLite through Node's built-in `node:sqlite`, at `path.join(paths.privateDir, 'assistant.sqlite')`. All auxiliary files stay beside it. This is a transaction store for assistant work, not a replacement for the Sheet: Sheets owns Todo identity/content/status, SQLite owns snapshots/runs/packets. The old private files are neither migrated nor deleted. Fake mode uses its resolved fake/temp private directory and must never reset assistant data during restart tests. Add a `PRAGMA user_version=1` transactional initializer, foreign keys, a bounded 250-millisecond busy timeout (return retryable assistant_busy on contention), and short transactions with no model/network work inside them. Fail closed on corrupt/newer-version stores; preserve files, surface `assistant_unavailable`, keep existing Todos usable, never silently recreate the database. Document stopped-server backup/restore of the database and any sidecars. No external database service or native npm package.
+
+**Shared schema.** New `shared/src/assistant.ts` defines the wire types and enum constants; the server validates all inputs and model output with its existing Zod library. The schema version is integer 1. Timestamps are UTC ISO strings; nullable means explicitly null. UUIDs are `crypto.randomUUID()` values; request IDs are generated in the browser once per intentional action and reused on HTTP retry. IDs travel as encoded path segments and are validated server-side. Every response omits raw model output, stderr, credentials and local filesystem paths.
+
+| Entity | Fields and meaning |
+|---|---|
+| `SourceRef` | `todoId`, `source: gmail|whatsapp`, `sender`, `context`, `messageDate`, `link`, `originalText`, `action`, `extractionStatus: done|pending|none`. Copy the existing Todo fields without guessing missing content. The stored excerpt is the existing bounded `original_text`, not a claim to contain the full conversation. |
+| `Briefing` | `id: UUID`, `createdAt`, `sheetReadAt`, `previousBriefingId: UUID|null`, `openCount`, `omittedCount`, `items: BriefingItem[]`, `sourceCoverage: SourceCoverage[]`. Snapshot is immutable. |
+| `BriefingItem` | `sourceRef`, `isNew: boolean`, `preparationEligible: boolean`; source Todo IDs are unique within a snapshot. |
+| `SourceCoverage` | `source: gmail|whatsapp`, `configured: boolean`, `freshness: unknown`. Sheet-read time never implies connector sync time or complete inbox coverage. UI says “stored tasks; use Refresh to check messages.” |
+| `AssistantRun` | `id: UUID`, `requestId: UUID`, `kind: briefing|prepare`, `state: running|succeeded|failed|interrupted`, `createdAt`, `finishedAt: string|null`, `targetId: UUID|null`, `sourceTodoId: string|null`, `errorCode: string|null`, `model: string|null`, `promptVersion: string|null`. Successful target is Briefing or Packet; no inferred execution acceptance. |
+| `PreparationPacket` | `id: UUID`, `todoId`, `sourceRef`, `createdAt`, `updatedAt`, `revision: positive integer`, `state: open|handled`, `draft: string`, `checklist: ChecklistItem[]`, `questions: string[]`, `model`, `promptVersion`. Latest saved user version is authoritative. |
+| `ChecklistItem` | `id: UUID`, `text: string`, `done: boolean`. At most 12 entries, each text <=500 characters. |
+| `Composition` | Model-only object `{draft: string, checklist: string[], questions: string[]}`; draft <=6000 characters, 1–12 checklist entries <=500 characters, 0–8 questions <=300 characters. Empty draft is allowed if a response cannot responsibly be prepared. No extra fields. |
+
+Store tables: `runs` (unique requestId plus normalized-request hash), `briefings` (versioned JSON snapshot), `packets` (unique todoId, revision plus validated JSON), foreign-key result references as appropriate. A repeated requestId with identical input returns the same run; conflicting input returns 409. A different requestId for the same already-prepared todo returns its existing packet without another model call. This fast path still atomically records a succeeded prepare run with unique requestId, normalized input hash, and targetId before returning. Normalize each request as a fixed ordered JSON array of kind and its defined arguments; hash its UTF-8 bytes with SHA-256. Recheck request identity and existing packet after acquiring the lock so admission races cannot duplicate work. Same requestId with any changed arguments is a conflict even on an existing-packet fast path. IDs and input bounds are shared by API, store and UI; runtime validation precedes every write. Packet input bounds match Composition plus <=12 validated checkbox IDs and boolean state.
+
+**Briefing behavior.** Read fresh Todos and Quarantine tabs through the existing SheetsStore, call `visibleTodos`, select `status=open`, sort descending by `message_date`, with lexical Todo ID as stable tie-break. Show at most 25 items, the full open count, and omitted count with link to Todos. No AI-generated priority/deadline claims: cards use current action/sender/context/date. Pending/none extractions may be shown with their labels but cannot be prepared. `isNew` means newly visible in this capped briefing compared with the immediately preceding successful stored snapshot. Label it "New to this briefing", never new mail or newly created task; the first snapshot labels everything baseline. A previously omitted task can be newly visible without being newly received. Completion/removal is not inferred from absence in the capped list. If either tab fails, the run fails and old snapshot remains visible as historical; never publish an empty-success briefing. Snapshot age is always visible. No claim of complete WhatsApp history (#18).
+
+**Preparation behavior.** Resolve the submitted briefingId and todoId to a stored briefing item, then re-read the selected Todo and current Quarantine before calling the composer. Compare all SourceRef fields to the saved item; changed content requires a new briefing/review, with no model call. Refuse unknown, no-longer-open, pending/none, or quarantined sources with 409 `revision_conflict` and a refresh instruction; failure to verify gives 503 `source_unavailable`. Never trust a client-supplied message body. Build a fixed prompt using `escapeUntrusted` around source data, then call existing `runClaude` with current `settings.extract.model` and timeout; require exitCode=0, timedOut=false and no error; JSON.parse(stdout) must yield an object without is_error=true and with a string .result. Parse that .result string into strict Composition. Reject malformed envelopes as compose_invalid; never pass raw ClaudeRunResult to the Composition parser. No tool access or sending ability. Source text is untrusted evidence, not authorization. Do not invent dates, commitments, names or completed actions; unresolved facts become questions. Render content as plain React text, not HTML; only existing `safeHref`-filtered original links become anchors. Persist only validated output. Errors use bounded codes (`compose_timeout`, `compose_invalid`, `compose_failed`, `run_timeout`), never stderr or input text.
+
+**Work and recovery.** `server/src/assistant/service.ts` serializes new assistant runs with existing `acquireLock` at `privateDir/assistant.lock`, separate from refresh.lock. One active assistant run per private directory, 90-second logical run deadline, model timeout capped at the smaller of 60 seconds and remaining deadline. SheetsStore.readRows has no caller AbortSignal: on deadline publish failed/run_timeout, abort owned composition, keep the lock while an outstanding source read settles, and discard its late result. Never start composition after deadline or shutdown. Logical terminal state is not evidence of settled I/O; another admission remains busy until settlement. Reuse the existing lock stale-age policy unchanged; do not add a 90-second forced takeover. Return 409 busy for another request without queuing it. Record the run before network/model work; atomically write success/result at completion. Existing request IDs are looked up before busy admission. Persist late results only if that exact run is still running. On initialization, reconcile abandoned running rows only after acquiring this same lock; if another owner is live, leave them untouched. Recovered abandoned rows become interrupted, never automatically re-run the model. A Retry action uses a new requestId. Read/save existing packets stays available during generation. Hold the lock until the bounded call settles; close aborts owned generation, prevents late success, and closes the DB after owned work settles. No general scheduler or automatic job replay.
+
+**Editing.** Store a packet before displaying success. Save full editable content with `expectedRevision`; compare-and-swap increments revision or returns 409 with the current packet for review. A second tab cannot overwrite a newer save. Display unsaved state and warn on navigation. Explicit save/handled does not alter Todo status; offer the existing Todos link for that separate action. No automatic regeneration over edits. Historical packets identify their source capture date and do not assert current source eligibility; every new model generation must freshly verify its sources. Persist no model “memory” beyond the packet/run data.
+
+**HTTP additions** (all behind existing Host and `X-Yarvis: 1` checks; existing routes remain as §6). On Briefing mount, query latest run and latest briefing; reconnect to a running run, show an interrupted/failed run honestly, and open any successful result using targetId. Reload/navigation never silently reissues a POST. A lost POST response uses latest-run discovery and correlates its requestId before offering an explicit retry. Poll an active run every 2 seconds using an additive typed wrapper; do not change legacy `RefreshStatus`.
+
+| Method/path | Request | Success |
+|---|---|---|
+| POST `/api/assistant/briefings` | `{requestId}` | 202 `{run: AssistantRun}`; same ID returns current run |
+| GET `/api/assistant/briefings/latest` | none | 200 `{briefing: Briefing|null}` |
+| GET `/api/assistant/runs/latest` | none | 200 `{run: AssistantRun|null}`; register before the parameterized route; allows reopening without a lost polling handle |
+| GET `/api/assistant/runs/:id` | UUID path | 200 `{run: AssistantRun}`; 404 unknown |
+| POST `/api/assistant/preparations` | `{requestId, briefingId, todoId}` | 202 `{run: AssistantRun}`; existing packet yields 200 `{packet: PreparationPacket}` |
+| GET `/api/assistant/preparations` | none | 200 `{packets: PacketSummary[],total: number,omittedCount: number}` ordered updatedAt descending; summary = id,todoId,context,state,updatedAt,revision |
+| GET `/api/assistant/preparations/:id` | UUID path | 200 `{packet: PreparationPacket}` |
+| PATCH `/api/assistant/preparations/:id` | `{expectedRevision,draft,checklist,questions,state}` | 200 `{packet: PreparationPacket}` |
+
+Use existing `{error,message?}` for errors except revision conflict responses may add `currentPacket` for a save conflict; UI must retain local unsaved text on every error. 400 invalid body/ID, 404 unknown record, 409 busy/conflict, 503 unavailable. API body cap stays 64 KiB. List results cap at 100 most recently updated packets in S1, with `{packets,total,omittedCount}` and a clear limit notice; add no silent truncation. The UI can open an older packet through its retained ID link. New store/service modules use injected clock, composer and SheetsStore for deterministic tests; the default composer uses real `runClaude`, fake mode supplies a strict synthetic composer. New source coverage flags derive from existing configured checks, never read secret values into response objects.
+
+### S1.6 Design decisions
+
+D42: choose the existing message sources only for this first journey. Project context arrives through the S2 request contract; this keeps first delivery tied to a working source rather than building cross-project ingestion.
+
+D43: SQLite owns only new assistant state; Sheets remains authoritative for existing tasks. Transactional run/result saves and revision checks are the reason to choose SQLite over another append-only cache. Use the built-in Node API behind one module, pin supported Node major 24 with minimum 24.14.0, and retain its experimental warning as a known runtime risk. The local probe establishes API availability, not full durability validation.
+
+D44: start on demand with a deterministic briefing of stored open tasks. No scheduling or AI urgency ranking in S1. This avoids promising always-on coverage before the source/restart journey is accepted. Refresh remains explicit.
+
+D45: reuse `runClaude` unchanged for preparation, with an independent prompt/parser and strict output schema. It is already tool-free and isolated; no executor/general agent loop is introduced.
+
+D46: interrupted generation requires explicit retry; saved work resumes by reopening it. “Handled” is the operator's local status, distinct from a sent message, Todo completion, or Forge acceptance.
+
+D47: first S2 integration hands review/dispatch to existing Calibration from Yarvis, then displays correlated status/results back in Yarvis. Absorb Pocket Relay ideas rather than build a second approval system. No producer repo is deleted, renamed, or made a runtime dependency by this plan.
+
+D48: S1 remains loopback-only. Responsive layout is tested at phone width but does not establish remote phone access. S2 must qualify a private authenticated transport and target-specific execution before advertising those capabilities.
+
+### S1.7 Build steps
+
+Only Steps 9–12 are the selected automated S1 queue; M7–M8 are attended acceptance. S2/S3 headings are not dispatchable steps. Keep earlier completed work and M5/M6 separate when syncing. Every code step uses the existing full project gates as separate commands; declared tests below add behavioral evidence rather than replacing those gates. All runtime reviewers use isolated fake data and ports; never use the operator's running main checkout.
+
+### Step 9: Persist a briefing of current screened tasks
+- **Status:** PENDING
+- **Problem:** Deliver an on-demand saved briefing at the actual app landing page, with honest freshness, counts and failure behavior.
+- **Type:** code
+- **Issue:** #
+- **Flags:** --reviewers full --isolation worktree
+- **Start-cmd:** `npx cross-env PORT=8797 YARVIS_WEB_PORT=5183 npm run dev:fake`
+- **URL:** http://127.0.0.1:5183/briefing
+- **Files:** `shared/src/assistant.ts`, `shared/src/index.ts`, `shared/src/types.ts`, `server/src/http.ts`, `server/src/assistant/{store,service}.ts`, `server/src/routes/assistant.ts`, `server/src/index.ts`, `server/src/main.ts`, `server/test/main.test.ts`, `README.md`, `CLAUDE.md`, `server/test/readme.test.ts`, `web/src/App.tsx`, `web/src/api.ts`, `web/src/pages/Briefing.tsx`, `web/src/i18n/strings.ts`, `web/src/styles.css`, root package/lock, new `server/test/assistant-{store,briefing,routes}.test.ts`, `web/e2e/assistant.spec.ts`.
+- **Produces:** Briefing/run schema v1, SQLite initializer and fail-closed handling, new error mappings, saved briefing UI, assistant run admission/recovery/close lifecycle, latest-run discovery and updated runtime requirement; no packet generation yet.
+- **Done when:** HTTP → real store → browser creates/reopens a snapshot; quarantined rows excluded; pending rows not actionable; >25 rows show omitted count; failed Sheets read retains historical snapshot; repeat request IDs do not create duplicate snapshots; Node24 build/test works; existing Todos, redirects, logo and pirate toggle remain functional. Legacy private setup with no DB initializes new assistant state without changing existing files. Corrupt/newer DB leaves legacy Todos usable and assistant visibly unavailable. Reopen during a run recovers its polling handle; abandoned rows become interrupted only after acquiring the lock, while a competing live owner is left untouched. A source read finishing after the logical deadline cannot publish success or trigger work. Close and interrupted recovery use production lifecycle wiring.
+- **Depends on:** completed Step 8
+
+### Step 10: Prepare one source-grounded response packet
+- **Status:** PENDING
+- **Problem:** A selected eligible briefing item produces a saved draft and checklist through the existing isolated CLI runner.
+- **Type:** code
+- **Issue:** #
+- **Flags:** --reviewers deep --isolation worktree
+- **Files:** `server/src/ai/compose.ts`, `server/src/assistant/{store,service}.ts`, `server/src/routes/assistant.ts`, `server/src/fakes/composer.ts`, `server/src/index.ts`, `shared/src/assistant.ts`, `web/src/api.ts`, `web/src/pages/{Briefing,Preparation}.tsx`, `web/src/App.tsx`, `web/src/i18n/strings.ts`, `server/test/compose.test.ts`, assistant route tests, `web/e2e/assistant.spec.ts`.
+- **Produces:** Bounded real/fake composition, revalidated source selection, persisted asynchronous run and packet, poll/result/error presentation. Deep review is selected for the untrusted-content and subprocess boundary; browser behavior remains covered by e2e.
+- **Done when:** One synthetic message traverses production API/service/prompt/parser/store/UI; repeated same Todo returns existing packet without another composer call; changed/quarantined source is refused before the model; unknown fields/oversized output/tool-injection text cannot execute actions; CLI failure/timeout is a visible failed run; stored output never contains raw stderr; existing extraction behavior/flags pass unchanged tests. Extend Step 9 lifecycle for aborting composition, explicit retry, and guarded late results; shutdown/timeout cannot start or commit late composition, and repeated request IDs remain conflict-checked even when returning an existing packet.
+- **Depends on:** 9
+
+### Step 11: Resume edited preparations safely
+- **Status:** PENDING
+- **Problem:** Preserve operator edits and handled state across tabs, failed saves and server restarts.
+- **Type:** code
+- **Issue:** #
+- **Flags:** --reviewers full --isolation worktree
+- **Start-cmd:** `npx cross-env PORT=8797 YARVIS_WEB_PORT=5183 npm run dev:fake`
+- **URL:** http://127.0.0.1:5183/briefing
+- **Files:** `server/src/assistant/{store,service}.ts`, `server/src/routes/assistant.ts`, `server/src/main.ts`, `web/src/pages/Preparation.tsx`, `web/src/api.ts`, `web/src/App.tsx`, `web/src/i18n/strings.ts`, `web/src/styles.css`, assistant tests, `server/test/main.test.ts`, `web/e2e/assistant.spec.ts`.
+- **Produces:** Saved preparations list/detail, revision-checked edits, explicit handled state, unsaved-change protection and reopening saved packets. Run recovery belongs to Steps 9 and 10, not this editing slice.
+- **Done when:** Two-tab stale save receives 409 with local edits retained; reopening after real server restart preserves saved draft and checkbox states; handled does not mutate Sheets; failed saves preserve local text; narrow 390px browser viewport supports the whole preparation flow.
+- **Depends on:** 10
+
+### Step 12: Prove the wired preparation journey and document recovery
+- **Status:** PENDING
+- **Problem:** Supply a reproducible end-to-end smoke and live acceptance instructions for the implemented S1 journey.
+- **Type:** code
+- **Issue:** #
+- **Flags:** --reviewers code --isolation worktree
+- **Files:** new `server/scripts/assistant-smoke.ts`, `package.json`, `.github/workflows/ci.yml`, `server/test/ci-workflow.test.ts`, `README.md`, `CLAUDE.md`, new `docs/acceptance/s1.md`, `web/e2e/assistant.spec.ts`.
+- **Produces:** `npm run smoke:assistant`, CI invocation, startup/recovery/backup instructions and the M7–M8 acceptance script.
+- **Done when:** Smoke completes within 60 seconds using real app/router/service/SQLite and a deterministic external composer/Sheets boundary; create/edit/close/reopen reads back the identical packet revision. Separately a real SQLite initializer/write/read smoke uses no mocks. Documentation distinguishes external fakes from M7 live CLI/Sheets proof. Run all standard gates plus `npm run smoke:assistant`; log-privacy checks plant synthetic secret-like message text and prove it absent from console/errors. Existing `npm run smoke` still passes.
+- **Depends on:** 11
+
+### Step M7: Live S1 substrate smoke
+- **Status:** PENDING
+- **Problem:** Verify the real Desktop → Sheets → Claude → saved preparation journey using the implemented instructions.
+- **Type:** operator
+- **Issue:** #
+- **Produces:** Observed pass/failure and sanitized evidence reference, not source/config artifacts.
+- **Done when:** From the Desktop shortcut, explicitly Refresh if needed, generate a briefing, select one benign real eligible task, prepare a useful packet with the real authenticated CLI, save an edit and reopen it. Confirm no message was sent or marked read by the new path. Do not alter global credentials or deliberately break another session's auth. A no-data condition is reported, not counted as live success. M7 runs before M8; no S1 completion on fake-only evidence.
+- **Depends on:** 12
+
+### Step M8: Accept the restart and handling journey
+- **Status:** PENDING
+- **Problem:** Verify the prepared work is useful and remains intact after a real restart.
+- **Type:** operator
+- **Issue:** #
+- **Produces:** Operator acceptance/defect observations with private evidence retained locally.
+- **Done when:** Follow `docs/acceptance/s1.md`: edit draft and checklist, close/reopen through the existing launcher, find saved work, mark handled, confirm task completion remains a separate explicit action. Inspect a stale briefing and a controlled source-failure simulation using an isolated synthetic run; distinguish missing data from an empty inbox. Record whether draft/checklist helps handle the selected request and triage failures. This is on-demand acceptance, not an unattended soak. Existing M5 (#13) observation and M6 (#14) publish check remain separately open until evidenced.
+- **Depends on:** M7
+
+### S1.8 Risks and boundaries
+
+| Item | Risk | Mitigation |
+|---|---|---|
+| Incomplete source history | Briefing mistaken for full inbox coverage | Stored-task label, source freshness unknown, timestamp/omission counts; #18 remains visible |
+| Generated claims | Invented promises/deadlines in a draft | Source excerpt + questions; user edits before sending; no external-send capability |
+| SQLite runtime | Built-in API is experimental on installed Node24 | Single store module; Node version pin; real database smoke; no runtime auto-migration of future schemas |
+| Store ownership | Editing the same facts in two stores | Sheet owns Todo; SQLite owns preparation; no implicit status synchronization |
+| Restart/process death | Duplicate generation or late overwrite | Durable request identity, separate lock, no auto replay, guarded result transaction |
+| Partial source failure | Old data presented as current | Fail new briefing; retain labeled historical snapshot |
+| Private text | Prompt/log/backup leakage | Reuse tool-free CLI isolation, content-free error vocabulary, private DB, synthetic tests and sanitized acceptance notes |
+| Mobile ambition | Responsive screenshot mistaken for phone operation | S1 no remote bind; S2 authenticated transport and real-phone acceptance required |
+
+No unresolved implementation alternatives remain for S1. D defaults are revisable through the proposal. S2 transport/producer compatibility work is deliberately outside S1 implementation readiness, described in its agreement rather than guessed as a current capability.
+
+### S1.9 Testing, setup and delivery process
+
+Windows PowerShell; Node 24.14.0 or later in major 24, npm, authenticated Claude CLI, existing read-only Gmail/WhatsApp and Sheets setup for live use. From the repository: `npm ci`; `npx playwright install chromium`; `npm run setup`; then `npm run dev:fake` for synthetic use, `npm run dev` for configured live use. The existing Desktop shortcut remains the real entry point. Production build: `npm run build`, then `npm start`. No new secret or additional OAuth scope is required.
+
+Per code step run separate commands: `npm run typecheck`, `npm run lint`, `npm run build`, `npm test`, `npm run e2e`, `npm run smoke`; after Step 12 add `npm run smoke:assistant`. Check each exit code. Windows npm inline env uses cross-env. Playwright already owns isolated 8797/5183 servers and a temp private directory; reviewer commands using those ports must run sequentially with e2e. If occupied, select a different pair and update both env values and review URL. New restart tests retain the same temp assistant DB, while synthetic external boundaries prevent live calls.
+
+Meaningful tests: fixed response shapes; SQLite old/no/newer/corrupt schemas; true save conflicts; concurrent lock admission; request idempotency; late results; isolation of fake data; quarantine revalidation; invalid model output; restart through the server entry point; empty versus unavailable source; privacy logs; narrow viewport. Human semantic usefulness and real CLI/Sheets coupling are M7–M8. There is no scheduled/unattended behavior in this scope, so a multi-hour autonomous soak is not applicable; any future scheduler must add one.
+
+Development order: plan-review → plan-redline (operator/default choices) → plan-wrap (fresh-context readiness) → repo-sync (populate issue numbers for this phase only) → build-phase (isolated implementation and independent required reviews) → attended M7–M8 → repo-update. No implementation starts from blank issue fields. This planning session does not silently authorize external issue messages, a production launch, or unrelated producer builds.
+
+## S2 — Selected direction, integration deferred
+
+Yarvis is the personal and eventual phone front door; initial project approval/dispatch uses the existing Ambition/Calibration surface, Forge owns execution, native build owners own acceptance. Pocket Relay's standalone product shape is not binding. Reuse exact-content review and dictation-as-draft concepts; do not require its entire planned CLI before S2. See [s2-integration-agreement.md](s2-integration-agreement.md) for ownership, minimum producer capabilities and the first real-phone acceptance journey. No executable S2 steps are selected here.
+
+## S3 — Optional experiment bench backlog
+
+Model comparison, replay UI and learning experiments are deferred. S1 retains ordinary run/source/model metadata only. No evaluation framework prerequisite.
+
 ## 12. Appendix
 
 ### 12.1 `private/settings.json` (and tracked repo-root `settings.example.json`)
@@ -857,6 +1067,18 @@ Invocation: `claude -p --tools "" --model claude-haiku-5-5 --output-format json 
 | D39 | D | Header logo: 10 HUD-ring + pirate-mark SVGs, `settings.logo` (one of `LOGO_IDS`, default `reactor-skull`), writable via `PATCH /api/settings {logo}`; wordmark `Y.A.R.V.I.S.` (J.A.R.V.I.S. was the inspiration only) | proposed (operator polish 2026-10-20) |
 | D40 | D | Connected apps + Settings merge into one Controls page (`/controls`, pirate "The Helm"); three nav items, old routes redirect; supersedes D12's "four nav items" | proposed (operator polish 2026-10-20) |
 | D41 | D | Single dark J.A.R.V.I.S. HUD theme (navy/cyan, red + black highlights) as CSS tokens in `styles.css`; Desktop launcher `scripts/launch.ps1` + `scripts/install-shortcut.ps1` (icon `scripts/yarvis.ico`) | proposed (operator polish 2026-10-20) |
+| P11 | P | S1 combines personal briefing and personal operations: brief me, then help me handle one request | accepted 2026-10-20 |
+| P12 | P | S1 prepares editable drafts/checklists; sending remains with the operator | accepted 2026-10-20 |
+| P13 | P | S2 delegated project work is intended; Yarvis is the phone-friendly front door, detailed build controls remain in Ambition/Calibration | accepted 2026-10-20 |
+| P14 | P | Pocket Relay may be redesigned or folded into Yarvis/Ambition rather than completed separately | accepted 2026-10-20 |
+| P15 | P | Experiment bench remains optional S3 backlog | accepted 2026-10-20 |
+| D42 | D | S1 uses existing message tasks only; project ingestion deferred | proposed 2026-10-20 |
+| D43 | D | SQLite for assistant state through built-in Node API; Node >=24.14.0 <25; Sheets stays Todo authority | proposed 2026-10-20 |
+| D44 | D | S1 on-demand deterministic briefing; separate Refresh; no scheduler or AI urgency scoring | proposed 2026-10-20 |
+| D45 | D | Reuse tool-free runClaude unchanged with separate strict composition prompt/parser | proposed 2026-10-20 |
+| D46 | D | One packet per Todo, revision-checked edits, explicit interrupted retry; handled distinct from external execution | proposed 2026-10-20 |
+| D47 | D | First S2 approval/dispatch hands off from Yarvis to existing Calibration; Pocket Relay concepts absorbed | proposed 2026-10-20 |
+| D48 | D | S1 loopback only; S2 must prove private authenticated phone transport before remote use | proposed 2026-10-20 |
 
 ### 12.6 Reused workspace patterns (producing files read)
 
