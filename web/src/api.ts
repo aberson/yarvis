@@ -10,11 +10,14 @@ import {
   type HealthResponse,
   type LatestBriefingResponse,
   type LatestRunResponse,
+  type PacketEdit,
+  type PacketListResponse,
   type PacketResponse,
   type PreparationPacket,
   type QuarantineItem,
   type RefreshStarted,
   type RefreshStatus,
+  type RevisionConflictBody,
   type RunResponse,
   type Settings,
   type SettingsPatch,
@@ -32,6 +35,8 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    /** The parsed JSON error body (e.g. a save conflict's `currentPacket`), when there was one. */
+    readonly body: Readonly<Record<string, unknown>> | null = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -54,6 +59,16 @@ export function isLostResponse(err: unknown): boolean {
   return true;
 }
 
+/**
+ * The current saved packet a stale save's 409 revision_conflict carries (S1.5 "Editing"), or null
+ * when the error is anything else (the caller then keeps its local edits and shows the error).
+ */
+export function conflictPacket(err: unknown): PreparationPacket | null {
+  if (!(err instanceof ApiError) || err.apiCode !== "revision_conflict") return null;
+  const current = (err.body as Partial<RevisionConflictBody> | null)?.currentPacket;
+  return current && typeof current === "object" ? current : null;
+}
+
 /** Encodes one path segment (ids contain `:`, `@` and `#`). */
 export function pathId(id: string): string {
   return encodeURIComponent(id);
@@ -73,14 +88,18 @@ async function request<T>(method: Method, path: string, body?: unknown): Promise
   if (!res.ok) {
     let code = "http_error";
     let message = `${method} ${path} failed with ${res.status}`;
+    let errBody: Record<string, unknown> | null = null;
     try {
-      const err = (await res.json()) as Partial<ApiErrorBody>;
-      if (typeof err.error === "string") code = err.error;
-      if (typeof err.message === "string") message = err.message;
+      const err = (await res.json()) as Partial<ApiErrorBody> | null;
+      if (err && typeof err === "object") {
+        errBody = err;
+        if (typeof err.error === "string") code = err.error;
+        if (typeof err.message === "string") message = err.message;
+      }
     } catch {
       // non-JSON error body (e.g. the proxy could not reach the server)
     }
-    throw new ApiError(res.status, code, message);
+    throw new ApiError(res.status, code, message, errBody);
   }
   return (await res.json()) as T;
 }
@@ -123,4 +142,10 @@ export const api = {
     request<StartPreparationResponse>("POST", "/api/assistant/preparations", body),
   getPacket: async (id: string): Promise<PreparationPacket> =>
     (await request<PacketResponse>("GET", `/api/assistant/preparations/${pathId(id)}`)).packet,
+  /** GET /api/assistant/preparations: the newest 100 saved packets with total + omitted count. */
+  listPackets: () => request<PacketListResponse>("GET", "/api/assistant/preparations"),
+  /** PATCH /api/assistant/preparations/:id: compare-and-swap save (409 carries currentPacket). */
+  savePacket: async (id: string, edit: PacketEdit): Promise<PreparationPacket> =>
+    (await request<PacketResponse>("PATCH", `/api/assistant/preparations/${pathId(id)}`, edit))
+      .packet,
 };

@@ -301,6 +301,98 @@ describe("startServer assistant lifecycle (plan S1, Step 9)", () => {
     });
   });
 
+  it("Step 11: a saved edit (draft, checkboxes, handled) survives close + restart unchanged", async () => {
+    const { paths, cleanup } = tempPaths({ seedSettings: true });
+    cleanups.push(cleanup);
+    const a = await start(paths.privateDir);
+    let aClosed = false;
+    cleanups.push(() => (aClosed ? undefined : a.close()));
+    const headers = { "Content-Type": "application/json", "X-Yarvis": "1" };
+    const b = await json<{ run: AssistantRun }>(`${a.url}/api/assistant/briefings`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ requestId: R1 }),
+    });
+    expect((await waitRun(a.url, b.body.run.id)).state).toBe("succeeded");
+    const briefing = (await json<{ briefing: Briefing }>(`${a.url}/api/assistant/briefings/latest`))
+      .body.briefing;
+    const item = briefing.items.find((i) => i.preparationEligible);
+    const p = await json<{ run: AssistantRun }>(`${a.url}/api/assistant/preparations`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        requestId: R2,
+        briefingId: briefing.id,
+        todoId: item?.sourceRef.todoId,
+      }),
+    });
+    const done = await waitRun(a.url, p.body.run.id);
+    expect(done.state).toBe("succeeded");
+    const original = (
+      await json<{ packet: PreparationPacket }>(
+        `${a.url}/api/assistant/preparations/${done.targetId}`,
+      )
+    ).body.packet;
+    const edit = {
+      expectedRevision: original.revision,
+      draft: "Operator-edited draft\nwith a second line.",
+      checklist: original.checklist.map((c, i) => ({
+        ...c,
+        text: i === 0 ? "Edited first step" : c.text,
+        done: i !== 1,
+      })),
+      questions: ["Edited question?"],
+      state: "open",
+    };
+    const saved = await json<{ packet: PreparationPacket }>(
+      `${a.url}/api/assistant/preparations/${original.id}`,
+      { method: "PATCH", headers, body: JSON.stringify(edit) },
+    );
+    expect(saved.status).toBe(200);
+    const handled = await json<{ packet: PreparationPacket }>(
+      `${a.url}/api/assistant/preparations/${original.id}`,
+      {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({
+          ...edit,
+          expectedRevision: saved.body.packet.revision,
+          state: "handled",
+        }),
+      },
+    );
+    expect(handled.status).toBe(200);
+    expect(handled.body.packet).toMatchObject({ revision: 3, state: "handled" });
+    await a.close();
+    aClosed = true;
+
+    const b2 = await start(paths.privateDir);
+    cleanups.push(() => b2.close());
+    const reopened = await json<{ packet: PreparationPacket }>(
+      `${b2.url}/api/assistant/preparations/${original.id}`,
+    );
+    expect(reopened.status).toBe(200);
+    expect(reopened.body.packet).toEqual(handled.body.packet);
+    expect(reopened.body.packet.draft).toBe(edit.draft);
+    expect(reopened.body.packet.checklist.map((c) => c.done)).toEqual(
+      edit.checklist.map((c) => c.done),
+    );
+    const list = await json<{ packets: Array<{ id: string; state: string; revision: number }> }>(
+      `${b2.url}/api/assistant/preparations`,
+    );
+    expect(list.body.packets.map((x) => [x.id, x.state, x.revision])).toEqual([
+      [original.id, "handled", 3],
+    ]);
+    // A stale tab's save after the restart is still refused, with the saved packet for review.
+    const stale = await json<{ error: string; currentPacket: PreparationPacket }>(
+      `${b2.url}/api/assistant/preparations/${original.id}`,
+      { method: "PATCH", headers, body: JSON.stringify({ ...edit, draft: "stale tab" }) },
+    );
+    expect(stale.status).toBe(409);
+    expect(stale.body.error).toBe("revision_conflict");
+    expect(stale.body.currentPacket).toEqual(handled.body.packet);
+  });
+
   it("close() with composition in flight aborts it, interrupts the run and commits no late packet", async () => {
     const { paths, cleanup } = tempPaths({ seedSettings: true });
     cleanups.push(cleanup);

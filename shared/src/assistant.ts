@@ -203,6 +203,53 @@ export interface PacketResponse {
 }
 export type StartPreparationResponse = RunResponse | PacketResponse;
 
+// ---------------------------------------------------------------------------------------------
+// Saved preparations (Step 11): revision-checked edits, explicit local "handled" state, list.
+
+/** GET /api/assistant/preparations returns at most this many (most recently updated) summaries. */
+export const PACKET_LIST_CAP = 100;
+
+/** One row of the saved-preparations list. */
+export interface PacketSummary {
+  id: string;
+  todoId: string;
+  /** The captured source's subject/chat name (sourceRef.context). */
+  context: string;
+  state: PacketState;
+  updatedAt: string;
+  revision: number;
+}
+
+/** GET /api/assistant/preparations: ordered updatedAt descending, capped (no silent truncation). */
+export interface PacketListResponse {
+  packets: PacketSummary[];
+  /** Every saved packet. */
+  total: number;
+  /** total minus the listed packets (older ones stay reachable by their id link). */
+  omittedCount: number;
+}
+
+/**
+ * PATCH /api/assistant/preparations/:id body: the full editable content plus the revision the edit
+ * was based on (compare-and-swap). Checklist items are edited/toggled in place: the ids must be
+ * exactly the saved packet's ids, in order (items are never added or removed). Questions may be
+ * added or removed within the Composition bounds. `state` is the operator's local status only.
+ */
+export interface PacketEdit {
+  expectedRevision: number;
+  draft: string;
+  checklist: ChecklistItem[];
+  questions: string[];
+  state: PacketState;
+}
+
+/** A stale save (409 revision_conflict) carries the current saved packet for review. */
+export interface RevisionConflictBody {
+  error: "revision_conflict";
+  message?: string;
+  currentPacket?: PreparationPacket;
+}
+
 /** A canonical lowercase/uppercase hex UUID (8-4-4-4-12). */
 export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

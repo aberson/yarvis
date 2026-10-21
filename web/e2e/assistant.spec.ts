@@ -5,7 +5,9 @@
 // snapshot, reconnecting to a running run, a lost POST retried with the same request id, and an
 // unavailable store leaving Todos usable. Step 10 adds Prepare -> saved packet -> /preparations/:id
 // (and reopening it without a new run), failed / refused / lost preparations, and plain-text
-// rendering of the packet page.
+// rendering of the packet page. Step 11 adds editing: the whole flow at 390 px (briefing -> prepare
+// -> edit -> leave prompt -> save -> handled -> list -> reopen), a stale second tab's 409 with local
+// edits kept, failed saves keeping local text, the reload warning and the list's limit notice.
 import { expect, test, type Page, type Request } from "@playwright/test";
 import type { AssistantRun, Briefing, BriefingItem, PreparationPacket } from "@yarvis/shared";
 import { en } from "../src/i18n/strings.js";
@@ -347,7 +349,7 @@ test("Prepare: an eligible task opens a saved packet; the same task reopens it w
   await expect(view).toHaveAttribute("data-revision", "1");
   await expect(view).toHaveAttribute("data-state", "open");
   await expect(page.getByTestId("preparation-not-sent")).toHaveText(en.prepNotSent);
-  await expect(page.getByTestId("preparation-draft")).toContainText("Synthetic fake-mode draft");
+  await expect(page.getByTestId("preparation-draft")).toHaveValue(/Synthetic fake-mode draft/);
   await expect(page.getByTestId("preparation-check")).toHaveCount(3);
   await expect(page.getByTestId("preparation-question")).toHaveCount(1);
   await expect(page.getByTestId("preparation-excerpt")).not.toBeEmpty();
@@ -479,7 +481,9 @@ test("the Preparation page renders model and source text as plain text and fits 
     }),
   );
   await page.goto(`/preparations/${PACKET_ID}`);
-  await expect(page.getByTestId("preparation-draft")).toContainText('<img src=x onerror="');
+  await expect(page.getByTestId("preparation-draft")).toHaveValue(hostile);
+  await expect(page.getByTestId("preparation-check-text")).toHaveValue(hostile);
+  await expect(page.getByTestId("preparation-question-text")).toHaveValue(hostile);
   await expect(page.getByTestId("preparation-excerpt")).toContainText("<img");
   await expect(page.locator('[data-testid="preparation"] img')).toHaveCount(0);
   await expect(page.getByTestId("preparation-link")).toHaveCount(0); // not an http(s) link
@@ -493,4 +497,269 @@ test("the Preparation page renders model and source text as plain text and fits 
 test("an unknown preparation id says so", async ({ page }) => {
   await page.goto("/preparations/70000000-0000-4000-8000-0000000000ff");
   await expect(page.getByTestId("preparation-not-found")).toHaveText(en.prepNotFound);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Step 11: resume edited preparations safely.
+
+async function noHorizontalScroll(page: Page): Promise<void> {
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+}
+
+/** On the seeded server: build a briefing, Prepare the given Todo, land on its packet page. */
+async function prepareSeeded(page: Page, n: number): Promise<string> {
+  await page.goto(`${SEEDED}/briefing`);
+  await page.getByTestId("briefing-generate").click();
+  await expect(page.getByTestId("briefing-run")).toHaveCount(0, { timeout: 10_000 });
+  const card = page.locator(`[data-testid="briefing-item"][data-todo-id="${seededId(n)}"]`);
+  await expect(card).toBeVisible({ timeout: 10_000 });
+  await card.getByTestId("briefing-prepare").click();
+  await expect(page).toHaveURL(/\/preparations\/[0-9a-f-]{36}$/, { timeout: 10_000 });
+  await expect(page.getByTestId("preparation")).toBeVisible();
+  return page.url();
+}
+
+const isPatch = (r: { url(): string; request(): Request }) =>
+  r.url().includes("/api/assistant/preparations/") && r.request().method() === "PATCH";
+
+test("390 px: briefing -> prepare -> edit -> save -> handled -> list -> reopen keeps every edit", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const url = await prepareSeeded(page, 20);
+  const packetId = url.split("/").pop() ?? "";
+  await noHorizontalScroll(page);
+  const view = page.getByTestId("preparation");
+  await expect(view).toHaveAttribute("data-revision", "1");
+  await expect(page.getByTestId("preparation-status")).toHaveText(en.prepSaved);
+  await expect(page.getByTestId("preparation-save")).toBeDisabled();
+  await expect(page.getByTestId("preparation-captured")).toContainText("Source captured");
+
+  // Edit the draft, one checklist item's text, tick another, add a question.
+  await page.getByTestId("preparation-draft").fill("My edited reply.\nSecond line.");
+  await page.getByTestId("preparation-check-text").first().fill("Edited first step");
+  await page.getByTestId("preparation-check-done").nth(1).check();
+  await page.getByTestId("preparation-question-add").click();
+  await page.getByTestId("preparation-question-text").last().fill("A question I added?");
+  await expect(page.getByTestId("preparation-status")).toHaveText(en.prepUnsaved);
+  await expect(view).toHaveAttribute("data-dirty", "true");
+  await noHorizontalScroll(page);
+
+  // An in-app navigation asks first; Stay keeps everything.
+  await page.getByTestId("nav-preparations").click();
+  await expect(page.getByTestId("preparation-leave")).toBeVisible();
+  await expect(page).toHaveURL(url);
+  await page.getByTestId("preparation-stay").click();
+  await expect(page.getByTestId("preparation-leave")).toHaveCount(0);
+  await expect(page.getByTestId("preparation-draft")).toHaveValue("My edited reply.\nSecond line.");
+
+  const saved = page.waitForResponse(isPatch);
+  await page.getByTestId("preparation-save").click();
+  expect((await saved).status()).toBe(200);
+  await expect(view).toHaveAttribute("data-revision", "2");
+  await expect(page.getByTestId("preparation-status")).toHaveText(en.prepSaved);
+
+  // Handled is a local status saved the same way; the Todos link is the separate action.
+  await page.getByTestId("preparation-toggle-state").click();
+  await expect(view).toHaveAttribute("data-state", "handled");
+  await expect(view).toHaveAttribute("data-revision", "3");
+  await expect(page.getByTestId("preparation-state")).toHaveText(en.prepStateHandled);
+  await expect(page.getByTestId("preparation-toggle-state")).toHaveText(en.prepReopen);
+  await expect(page.getByTestId("preparation-handled-note")).toContainText(en.prepHandledNote);
+  await expect(page.getByTestId("preparation-todos-link")).toHaveAttribute("href", "/todos");
+  await noHorizontalScroll(page);
+
+  // Saved: navigation is no longer blocked. The list shows it as handled.
+  await page.getByTestId("nav-preparations").click();
+  await expect(page).toHaveURL(/\/preparations$/);
+  const row = page.locator(`[data-testid="preparations-item"][data-packet-id="${packetId}"]`);
+  await expect(row).toHaveAttribute("data-state", "handled");
+  await expect(row.getByTestId("preparations-state")).toHaveText(en.prepStateHandled);
+  await expect(row.getByTestId("preparations-updated")).toContainText("revision 3");
+  await expect(page.getByTestId("preparations-omitted")).toHaveCount(0);
+  await noHorizontalScroll(page);
+
+  await row.getByTestId("preparations-open").click();
+  await expect(page).toHaveURL(url);
+  await expect(page.getByTestId("preparation-draft")).toHaveValue("My edited reply.\nSecond line.");
+  await expect(page.getByTestId("preparation-check-text").first()).toHaveValue("Edited first step");
+  await expect(page.getByTestId("preparation-check-done").nth(1)).toBeChecked();
+  await expect(page.getByTestId("preparation-check-done").first()).not.toBeChecked();
+  await expect(page.getByTestId("preparation-question-text").last()).toHaveValue(
+    "A question I added?",
+  );
+  await expect(page.getByTestId("preparation")).toHaveAttribute("data-state", "handled");
+
+  // "Handled" did not touch the Todo: it is still listed as open on the Todos page.
+  await page.getByTestId("preparation-todos-link").click();
+  await expect(page).toHaveURL(/\/todos$/);
+  await expect(page.getByTestId("todo-row").filter({ hasText: "Seeded action 20" })).toHaveCount(1);
+});
+
+test("a stale second tab gets the conflict with its edits kept; keep mine or load saved, never silent", async ({
+  page,
+  context,
+}) => {
+  const url = await prepareSeeded(page, 21);
+  const tabB = await context.newPage();
+  await tabB.goto(url);
+  await expect(tabB.getByTestId("preparation")).toHaveAttribute("data-revision", "1");
+
+  // Tab A saves first.
+  await page.getByTestId("preparation-draft").fill("Tab A text");
+  await page.getByTestId("preparation-save").click();
+  await expect(page.getByTestId("preparation")).toHaveAttribute("data-revision", "2");
+
+  // Tab B, still on revision 1, is refused and keeps its own text next to the saved version.
+  await tabB.getByTestId("preparation-draft").fill("Tab B text");
+  await tabB.getByTestId("preparation-check-done").first().check();
+  const refused = tabB.waitForResponse(isPatch);
+  await tabB.getByTestId("preparation-save").click();
+  expect((await refused).status()).toBe(409);
+  await expect(tabB.getByTestId("preparation-conflict")).toBeVisible();
+  await expect(tabB.getByTestId("preparation-draft")).toHaveValue("Tab B text");
+  await expect(tabB.getByTestId("preparation-check-done").first()).toBeChecked();
+  await expect(tabB.getByTestId("preparation-theirs-draft")).toHaveText("Tab A text");
+  await expect(tabB.getByTestId("preparation-save")).toBeDisabled();
+  await expect(tabB.getByTestId("preparation-status")).toHaveText(en.prepUnsaved);
+
+  // Keep mine: re-based on revision 2, then an explicit save writes revision 3.
+  await tabB.getByTestId("preparation-keep-mine").click();
+  await expect(tabB.getByTestId("preparation-conflict")).toHaveCount(0);
+  await expect(tabB.getByTestId("preparation")).toHaveAttribute("data-revision", "2");
+  await expect(tabB.getByTestId("preparation-draft")).toHaveValue("Tab B text");
+  await tabB.getByTestId("preparation-save").click();
+  await expect(tabB.getByTestId("preparation")).toHaveAttribute("data-revision", "3");
+
+  // Tab A is now the stale one: Load saved version replaces its local text only on request.
+  await page.getByTestId("preparation-draft").fill("Tab A second edit");
+  await page.getByTestId("preparation-save").click();
+  await expect(page.getByTestId("preparation-conflict")).toBeVisible();
+  await expect(page.getByTestId("preparation-draft")).toHaveValue("Tab A second edit");
+  await page.getByTestId("preparation-load-theirs").click();
+  await expect(page.getByTestId("preparation-draft")).toHaveValue("Tab B text");
+  await expect(page.getByTestId("preparation")).toHaveAttribute("data-revision", "3");
+  await expect(page.getByTestId("preparation")).toHaveAttribute("data-dirty", "false");
+  await tabB.close();
+});
+
+test("a failed save keeps local text and shows the error; closing warns about unsaved edits", async ({
+  page,
+}) => {
+  const target = `**/api/assistant/preparations/${PACKET_ID}`;
+  await page.route(target, (route) =>
+    route.request().method() === "PATCH"
+      ? route.fulfill({ status: 503, json: { error: "assistant_unavailable", message: "down" } })
+      : route.fulfill({ json: { packet: packet() } }),
+  );
+  await page.goto(`/preparations/${PACKET_ID}`);
+  await page.getByTestId("preparation-draft").fill("Precious local text");
+  await page.getByTestId("preparation-save").click();
+  await expect(page.getByTestId("preparation-save-error")).toContainText(en.prepSaveError);
+  await expect(page.getByTestId("preparation-draft")).toHaveValue("Precious local text");
+  await expect(page.getByTestId("preparation-status")).toHaveText(en.prepUnsaved);
+
+  // A lost response (network failure) also keeps the text.
+  await page.unroute(target);
+  await page.route(target, (route) =>
+    route.request().method() === "PATCH"
+      ? route.abort("connectionreset")
+      : route.fulfill({ json: { packet: packet() } }),
+  );
+  await page.getByTestId("preparation-save").click();
+  await expect(page.getByTestId("preparation-save-error")).toBeVisible();
+  await expect(page.getByTestId("preparation-draft")).toHaveValue("Precious local text");
+
+  // A blank checklist item is caught before any request.
+  let patches = 0;
+  page.on("request", (r) => {
+    if (r.method() === "PATCH") patches++;
+  });
+  await page.getByTestId("preparation-check-text").first().fill("   ");
+  await page.getByTestId("preparation-save").click();
+  await expect(page.getByTestId("preparation-save-error")).toContainText(en.prepSaveInvalid);
+  expect(patches).toBe(0);
+
+  // Closing the tab with unsaved edits raises the browser's leave prompt.
+  const dialog = page.waitForEvent("dialog");
+  await page.close({ runBeforeUnload: true });
+  const d = await dialog;
+  expect(d.type()).toBe("beforeunload");
+  await d.dismiss();
+});
+
+test("the saved list shows the total and a limit notice past 100, never a silent cut", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const summaries = Array.from({ length: 100 }, (_, i) => ({
+    id: `70000000-0000-4000-8000-${(0x1000 + i).toString(16).padStart(12, "0")}`,
+    todoId: item(i + 1).sourceRef.todoId,
+    context: `Subject ${i + 1} ${"long".repeat(20)}`,
+    state: i % 2 === 0 ? "open" : "handled",
+    updatedAt: "2026-10-21T09:00:00.000Z",
+    revision: 1,
+  }));
+  await page.route("**/api/assistant/preparations", (route) =>
+    route.fulfill({ json: { packets: summaries, total: 130, omittedCount: 30 } }),
+  );
+  await page.goto("/preparations");
+  await expect(page.getByTestId("preparations-item")).toHaveCount(100);
+  await expect(page.getByTestId("preparations-total")).toHaveText("130 saved");
+  await expect(page.getByTestId("preparations-omitted")).toContainText(
+    "100 most recently updated of 130",
+  );
+  await expect(page.getByTestId("preparations-open").first()).toHaveAttribute(
+    "href",
+    `/preparations/${summaries[0]?.id}`,
+  );
+  await noHorizontalScroll(page);
+});
+
+test("an empty saved list points back to the Briefing", async ({ page }) => {
+  await page.route("**/api/assistant/preparations", (route) =>
+    route.fulfill({ json: { packets: [], total: 0, omittedCount: 0 } }),
+  );
+  await page.goto("/preparations");
+  await expect(page.getByTestId("preparations-empty")).toContainText(en.prepListEmpty);
+});
+
+test("Leave without saving proceeds and discards edits; a lost save that committed is not a false conflict", async ({
+  page,
+}) => {
+  const url = await prepareSeeded(page, 22);
+  const original = await page.getByTestId("preparation-draft").inputValue();
+
+  // Leave path of the in-app prompt: navigation proceeds, the unsaved edit is gone on return.
+  await page.getByTestId("preparation-draft").fill("Throwaway edit");
+  await page.getByTestId("nav-briefing").click();
+  await expect(page.getByTestId("preparation-leave")).toBeVisible();
+  await page.getByTestId("preparation-leave-go").click();
+  await expect(page).toHaveURL(/\/briefing$/);
+  await page.goto(url);
+  await expect(page.getByTestId("preparation-draft")).toHaveValue(original);
+
+  // The server commits the save but the browser never sees the answer.
+  await page.route("**/api/assistant/preparations/*", async (route) => {
+    if (route.request().method() !== "PATCH") return route.continue();
+    await route.fetch();
+    return route.abort("connectionreset");
+  });
+  await page.getByTestId("preparation-draft").fill("First edit");
+  await page.getByTestId("preparation-save").click();
+  await expect(page.getByTestId("preparation-save-error")).toBeVisible();
+  await expect(page.getByTestId("preparation")).toHaveAttribute("data-revision", "1");
+  await page.unroute("**/api/assistant/preparations/*");
+
+  // More typing, then Save: the 409 is our own committed write, so it re-bases and saves.
+  await page.getByTestId("preparation-draft").fill("First edit, then more");
+  await page.getByTestId("preparation-save").click();
+  await expect(page.getByTestId("preparation")).toHaveAttribute("data-revision", "3");
+  await expect(page.getByTestId("preparation-conflict")).toHaveCount(0);
+  await expect(page.getByTestId("preparation-status")).toHaveText(en.prepSaved);
+  await page.reload();
+  await expect(page.getByTestId("preparation-draft")).toHaveValue("First edit, then more");
 });

@@ -876,7 +876,7 @@ Only Steps 9–12 are the selected automated S1 queue; M7–M8 are attended acce
 - **Depends on:** 9
 
 ### Step 11: Resume edited preparations safely
-- **Status:** PENDING
+- **Status:** DONE (2026-10-21)
 - **Problem:** Preserve operator edits and handled state across tabs, failed saves and server restarts.
 - **Type:** code
 - **Issue:** #24

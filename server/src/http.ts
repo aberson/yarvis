@@ -18,7 +18,16 @@ const STATUS: Record<ApiErrorCode, number> = {
   source_unavailable: 503,
 };
 
-export function sendError(res: Response, error: ApiErrorCode, message?: string): void {
+/**
+ * Sends `{error, message?}` with the code's fixed status. `extra` adds documented fields to the body
+ * (only a save conflict's `currentPacket` today, S1.5); it never overrides `error`/`message`.
+ */
+export function sendError(
+  res: Response,
+  error: ApiErrorCode,
+  message?: string,
+  extra?: Readonly<Record<string, unknown>>,
+): void {
   const body: ApiErrorBody = message === undefined ? { error } : { error, message };
-  res.status(STATUS[error]).json(body);
+  res.status(STATUS[error]).json(extra ? { ...extra, ...body } : body);
 }

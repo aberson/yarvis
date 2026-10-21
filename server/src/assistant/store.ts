@@ -22,7 +22,9 @@ import {
   ASSISTANT_SCHEMA_VERSION,
   type AssistantRun,
   type Briefing,
+  type PacketEdit,
   type PacketState,
+  type PacketSummary,
   type PreparationPacket,
   type RunErrorCode,
   type RunKind,
@@ -74,6 +76,22 @@ export class RequestConflictError extends Error {
   constructor() {
     super("request id already used with different input");
     this.name = "RequestConflictError";
+  }
+}
+
+/** A save based on a stale revision (HTTP 409 revision_conflict with the current packet). */
+export class PacketRevisionConflictError extends Error {
+  constructor(readonly currentPacket: PreparationPacket) {
+    super("the preparation was saved elsewhere since this edit began");
+    this.name = "PacketRevisionConflictError";
+  }
+}
+
+/** An edit whose checklist item ids do not match the saved packet (HTTP 400 bad_request). */
+export class PacketEditInvalidError extends Error {
+  constructor() {
+    super("checklist item ids must match the saved preparation");
+    this.name = "PacketEditInvalidError";
   }
 }
 
@@ -497,6 +515,84 @@ export class AssistantStore {
       ).run(packet.id, packet.createdAt, packet.model, packet.promptVersion, runId);
       pruneRuns(db);
       return packet;
+    });
+  }
+
+  /**
+   * The saved-preparations list: at most `limit` summaries, most recently updated first (ties by
+   * newest insertion), plus the total count so the caller can report what was omitted.
+   */
+  listPackets(limit: number): { packets: PacketSummary[]; total: number } {
+    return this.use((db) => {
+      const rows = db
+        .prepare(
+          `SELECT id, todo_id, state, updated_at, revision,
+                  json_extract(body, '$.sourceRef.context') AS context
+           FROM packets ORDER BY updated_at DESC, rowid DESC LIMIT ?`,
+        )
+        .all(limit) as Array<{
+        id: string;
+        todo_id: string;
+        state: PacketState;
+        updated_at: string;
+        revision: number;
+        context: unknown;
+      }>;
+      const total = Number(
+        (db.prepare("SELECT COUNT(*) AS n FROM packets").get() as { n: number }).n,
+      );
+      return {
+        total,
+        packets: rows.map((r) => ({
+          id: r.id,
+          todoId: r.todo_id,
+          context: typeof r.context === "string" ? r.context : "",
+          state: r.state,
+          updatedAt: r.updated_at,
+          revision: Number(r.revision),
+        })),
+      };
+    });
+  }
+
+  /**
+   * Compare-and-swap save of an operator edit (S1.5 "Editing"), in ONE short transaction: the
+   * packet's revision must equal `edit.expectedRevision`, else PacketRevisionConflictError carries
+   * the current packet and nothing changes. The checklist ids must be exactly the saved ids in order
+   * (else PacketEditInvalidError). On success revision increments, updatedAt = `updatedAt`, and the
+   * edited draft/checklist/questions/state replace the stored ones. Returns null for an unknown id.
+   */
+  savePacket(id: string, edit: PacketEdit, updatedAt: string): PreparationPacket | null {
+    return this.tx((db) => {
+      const row = db.prepare("SELECT * FROM packets WHERE id = ?").get(id) as PacketRow | undefined;
+      if (!row) return null;
+      const current = toPacket(row);
+      if (current.revision !== edit.expectedRevision) {
+        throw new PacketRevisionConflictError(current);
+      }
+      const savedIds = current.checklist.map((c) => c.id);
+      const editIds = edit.checklist.map((c) => c.id);
+      if (savedIds.length !== editIds.length || savedIds.some((v, i) => v !== editIds[i])) {
+        throw new PacketEditInvalidError();
+      }
+      const next: PreparationPacket = {
+        ...current,
+        revision: current.revision + 1,
+        updatedAt,
+        state: edit.state,
+        draft: edit.draft,
+        checklist: edit.checklist.map((c) => ({ id: c.id, text: c.text, done: c.done })),
+        questions: [...edit.questions],
+      };
+      const res = db
+        .prepare(
+          `UPDATE packets SET revision = ?, state = ?, updated_at = ?, body = ?
+           WHERE id = ? AND revision = ?`,
+        )
+        .run(next.revision, next.state, updatedAt, JSON.stringify(next), id, current.revision);
+      // Unreachable under BEGIN IMMEDIATE (the row was read in this transaction); kept as a guard.
+      if (Number(res.changes) !== 1) throw new PacketRevisionConflictError(current);
+      return next;
     });
   }
 

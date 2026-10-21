@@ -40,9 +40,12 @@ import {
   ASSISTANT_RUN_DEADLINE_MS,
   ASSISTANT_SOURCES,
   BRIEFING_ITEM_CAP,
+  PACKET_LIST_CAP,
   type AssistantRun,
   type Briefing,
   type BriefingItem,
+  type PacketEdit,
+  type PacketListResponse,
   type PreparationPacket,
   type QuarantineItem,
   type RunErrorCode,
@@ -72,6 +75,8 @@ import {
   AssistantUnavailableError,
   assistantLockFile,
   isConstraint,
+  PacketEditInvalidError,
+  PacketRevisionConflictError,
   RequestConflictError,
   requestHash,
   type RunMeta,
@@ -516,6 +521,26 @@ export class AssistantService {
   }
 
   /**
+   * GET /api/assistant/preparations (Step 11): the PACKET_LIST_CAP most recently updated summaries,
+   * with the total and how many were omitted (never a silent truncation).
+   */
+  listPackets(): PacketListResponse {
+    const { packets, total } = this.db().listPackets(PACKET_LIST_CAP);
+    return { packets, total, omittedCount: total - packets.length };
+  }
+
+  /**
+   * PATCH /api/assistant/preparations/:id (Step 11): a compare-and-swap save in one short store
+   * transaction (no lock, no network, no model work). It touches ONLY the SQLite packet: "handled"
+   * is the operator's local status and never writes the sheet (the Todo is completed separately on
+   * the Todos page). Throws PacketRevisionConflictError (409, with the current packet),
+   * PacketEditInvalidError (400), AssistantBusyError, AssistantUnavailableError; null = unknown id.
+   */
+  savePacket(id: string, edit: PacketEdit): PreparationPacket | null {
+    return this.db().savePacket(id, edit, this.iso());
+  }
+
+  /**
    * POST /api/assistant/preparations. A repeated request id with the same input replays (its
    * packet once succeeded, else its run); a changed input is a RequestConflictError. Resolves once
    * the source is verified (202 run) or with the existing packet (200); throws SourceConflictError
@@ -806,4 +831,10 @@ export class AssistantService {
   }
 }
 
-export { AssistantBusyError, AssistantUnavailableError, RequestConflictError };
+export {
+  AssistantBusyError,
+  AssistantUnavailableError,
+  PacketEditInvalidError,
+  PacketRevisionConflictError,
+  RequestConflictError,
+};

@@ -1,6 +1,6 @@
 // web/src/api.ts: path ids are encodeURIComponent-ed (D22) and PATCH sends X-Yarvis: 1.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "../src/api.js";
+import { api, ApiError, conflictPacket } from "../src/api.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -57,5 +57,60 @@ describe("api.startRefresh", () => {
       Promise.resolve(new Response(JSON.stringify({ running: true }), { status: 409 })),
     );
     expect(await api.startRefresh()).toEqual({ started: false });
+  });
+});
+
+describe("api.savePacket / listPackets (S1 Step 11)", () => {
+  const ID = "70000000-0000-4000-8000-0000000000cc";
+  const edit = {
+    expectedRevision: 3,
+    draft: "d",
+    checklist: [{ id: "70000000-0000-4000-8000-0000000000d1", text: "c", done: true }],
+    questions: [],
+    state: "handled" as const,
+  };
+
+  it("PATCHes the full edit with X-Yarvis: 1 and returns the saved packet", async () => {
+    const fetchMock = stubFetch({ packet: { id: ID, revision: 4 } });
+    const saved = await api.savePacket(ID, edit);
+    expect(saved).toEqual({ id: ID, revision: 4 });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe(`/api/assistant/preparations/${ID}`);
+    expect(init?.method).toBe("PATCH");
+    expect((init?.headers as Record<string, string>)["X-Yarvis"]).toBe("1");
+    expect(JSON.parse(init?.body as string)).toEqual(edit);
+  });
+
+  it("a 409 revision_conflict exposes currentPacket; other errors do not", async () => {
+    const current = { id: ID, revision: 5, draft: "theirs" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ error: "revision_conflict", message: "m", currentPacket: current }),
+            { status: 409 },
+          ),
+        ),
+      ),
+    );
+    const err = await api.savePacket(ID, edit).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(conflictPacket(err)).toEqual(current);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(new Response(JSON.stringify({ error: "bad_request" }), { status: 400 })),
+      ),
+    );
+    expect(conflictPacket(await api.savePacket(ID, edit).catch((e: unknown) => e))).toBeNull();
+    expect(conflictPacket(new Error("network"))).toBeNull();
+  });
+
+  it("listPackets GETs /api/assistant/preparations", async () => {
+    const fetchMock = stubFetch({ packets: [], total: 0, omittedCount: 0 });
+    expect(await api.listPackets()).toEqual({ packets: [], total: 0, omittedCount: 0 });
+    expect(fetchMock.mock.calls[0]![0]).toBe("/api/assistant/preparations");
   });
 });

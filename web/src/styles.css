@@ -566,3 +566,90 @@ code {
   margin: 4px 0;
   overflow-wrap: anywhere;
 }
+
+/* ---- Editing saved preparations (S1 Step 11) ---- */
+.preparation-nav {
+  gap: 8px 20px;
+}
+.preparation-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--black);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  resize: vertical;
+}
+.preparation-input:focus {
+  border-color: var(--holo);
+}
+.preparation-checklist li,
+.preparation-questions li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.preparation-checklist li input[type="checkbox"] {
+  margin-top: 10px;
+  flex: none;
+}
+.preparation-checklist li .preparation-input,
+.preparation-questions li .preparation-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.preparation-questions {
+  padding: 0;
+  list-style: none;
+}
+.preparation-questions li button {
+  flex: none;
+}
+.preparation-actions {
+  margin: 16px 0 8px;
+}
+.preparation-actions .tag {
+  margin-left: 0;
+}
+.preparation-unsaved {
+  color: var(--red-bright);
+  background: var(--red-soft);
+}
+.preparation-state-handled {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+.preparation-panel {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--red);
+  border-radius: 6px;
+  background: var(--red-soft);
+  overflow-wrap: anywhere;
+}
+.preparation-panel h2,
+.preparation-panel h3 {
+  margin-top: 0;
+}
+.preparation-theirs {
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-solid);
+}
+.preparations-item .todo-main {
+  flex-wrap: wrap;
+}
+.preparations-item .tag {
+  margin-left: 0;
+}
+.preparations-open {
+  overflow-wrap: anywhere;
+}
