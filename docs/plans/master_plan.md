@@ -855,7 +855,7 @@ Only Steps 9–12 are the selected automated S1 queue; M7–M8 are attended acce
 - **Status:** PENDING
 - **Problem:** Deliver an on-demand saved briefing at the actual app landing page, with honest freshness, counts and failure behavior.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #22
 - **Flags:** --reviewers full --isolation worktree
 - **Start-cmd:** `npx cross-env PORT=8797 YARVIS_WEB_PORT=5183 npm run dev:fake`
 - **URL:** http://127.0.0.1:5183/briefing
@@ -868,7 +868,7 @@ Only Steps 9–12 are the selected automated S1 queue; M7–M8 are attended acce
 - **Status:** PENDING
 - **Problem:** A selected eligible briefing item produces a saved draft and checklist through the existing isolated CLI runner.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #23
 - **Flags:** --reviewers deep --isolation worktree
 - **Files:** `server/src/ai/compose.ts`, `server/src/assistant/{store,service}.ts`, `server/src/routes/assistant.ts`, `server/src/fakes/composer.ts`, `server/src/index.ts`, `shared/src/assistant.ts`, `web/src/api.ts`, `web/src/pages/{Briefing,Preparation}.tsx`, `web/src/App.tsx`, `web/src/i18n/strings.ts`, `server/test/compose.test.ts`, assistant route tests, `web/e2e/assistant.spec.ts`.
 - **Produces:** Bounded real/fake composition, revalidated source selection, persisted asynchronous run and packet, poll/result/error presentation. Deep review is selected for the untrusted-content and subprocess boundary; browser behavior remains covered by e2e.
@@ -879,7 +879,7 @@ Only Steps 9–12 are the selected automated S1 queue; M7–M8 are attended acce
 - **Status:** PENDING
 - **Problem:** Preserve operator edits and handled state across tabs, failed saves and server restarts.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #24
 - **Flags:** --reviewers full --isolation worktree
 - **Start-cmd:** `npx cross-env PORT=8797 YARVIS_WEB_PORT=5183 npm run dev:fake`
 - **URL:** http://127.0.0.1:5183/briefing
@@ -892,7 +892,7 @@ Only Steps 9–12 are the selected automated S1 queue; M7–M8 are attended acce
 - **Status:** PENDING
 - **Problem:** Supply a reproducible end-to-end smoke and live acceptance instructions for the implemented S1 journey.
 - **Type:** code
-- **Issue:** #
+- **Issue:** #25
 - **Flags:** --reviewers code --isolation worktree
 - **Files:** new `server/scripts/assistant-smoke.ts`, `package.json`, `.github/workflows/ci.yml`, `server/test/ci-workflow.test.ts`, `README.md`, `CLAUDE.md`, new `docs/acceptance/s1.md`, `web/e2e/assistant.spec.ts`.
 - **Produces:** `npm run smoke:assistant`, CI invocation, startup/recovery/backup instructions and the M7–M8 acceptance script.
@@ -903,7 +903,7 @@ Only Steps 9–12 are the selected automated S1 queue; M7–M8 are attended acce
 - **Status:** PENDING
 - **Problem:** Verify the real Desktop → Sheets → Claude → saved preparation journey using the implemented instructions.
 - **Type:** operator
-- **Issue:** #
+- **Issue:** #26
 - **Produces:** Observed pass/failure and sanitized evidence reference, not source/config artifacts.
 - **Done when:** From the Desktop shortcut, explicitly Refresh if needed, generate a briefing, select one benign real eligible task, prepare a useful packet with the real authenticated CLI, save an edit and reopen it. Confirm no message was sent or marked read by the new path. Do not alter global credentials or deliberately break another session's auth. A no-data condition is reported, not counted as live success. M7 runs before M8; no S1 completion on fake-only evidence.
 - **Depends on:** 12
@@ -912,7 +912,7 @@ Only Steps 9–12 are the selected automated S1 queue; M7–M8 are attended acce
 - **Status:** PENDING
 - **Problem:** Verify the prepared work is useful and remains intact after a real restart.
 - **Type:** operator
-- **Issue:** #
+- **Issue:** #27
 - **Produces:** Operator acceptance/defect observations with private evidence retained locally.
 - **Done when:** Follow `docs/acceptance/s1.md`: edit draft and checklist, close/reopen through the existing launcher, find saved work, mark handled, confirm task completion remains a separate explicit action. Inspect a stale briefing and a controlled source-failure simulation using an isolated synthetic run; distinguish missing data from an empty inbox. Record whether draft/checklist helps handle the selected request and triage failures. This is on-demand acceptance, not an unattended soak. Existing M5 (#13) observation and M6 (#14) publish check remain separately open until evidenced.
 - **Depends on:** M7
