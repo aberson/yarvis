@@ -9,11 +9,16 @@
 // On mount it reads the latest run and latest briefing and reconnects to a running run (polled every
 // 2 s). A request id is generated once per Build click and reused only by an explicit Retry; reload
 // never re-POSTs.
+// Step 10: an eligible card has a Prepare action. Its request id is generated once per click and
+// reused only to retry a LOST response; a failed/interrupted preparation offers Retry with a NEW
+// id. The run is polled (same helper) and a success, or an existing packet for the same Todo (no
+// model call), opens /preparations/:id. A running/failed prepare run found on mount is shown on
+// its card.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import type { AssistantRun, Briefing, RunErrorCode } from "@yarvis/shared";
-import { api, ApiError } from "../api.js";
-import { pollAssistantRun, startOrRecover } from "../assistant-poll.js";
+import { api, ApiError, pathId } from "../api.js";
+import { pollAssistantRun, prepareOrRecover, startOrRecover } from "../assistant-poll.js";
 import { usePirate, type StringKey, type Strings } from "../i18n/strings.js";
 import { fill, formatAge, formatDate, safeHref } from "../ui/format.js";
 
@@ -23,9 +28,10 @@ const RUN_ERROR_LABEL: Readonly<Record<RunErrorCode, StringKey>> = {
   run_timeout: "errRunTimeout",
   shutdown: "errShutdown",
   abandoned: "errAbandoned",
-  compose_timeout: "errRunTimeout",
-  compose_invalid: "errInternal",
-  compose_failed: "errInternal",
+  source_changed: "errSourceChanged",
+  compose_timeout: "errComposeTimeout",
+  compose_invalid: "errComposeInvalid",
+  compose_failed: "errComposeFailed",
   internal: "errInternal",
 };
 
@@ -34,6 +40,33 @@ const AGE_TICK_MS = 30_000;
 
 type Problem =
   { kind: "busy" } | { kind: "lost" } | { kind: "start" | "status" | "load"; message: string };
+
+/** The one preparation the page is following (the server runs one assistant run at a time). */
+interface Prep {
+  todoId: string;
+  /** null: the POST has not answered yet (or was refused, see `problem`). */
+  run: AssistantRun | null;
+  problem:
+    | { kind: "busy" | "lost" | "conflict" | "source" }
+    | { kind: "start" | "status"; message: string }
+    | null;
+}
+
+/** What the cards need to show / start a preparation. */
+interface PrepControls {
+  prep: Prep | null;
+  /** Another run (briefing or preparation) is in progress: no new Prepare. */
+  blocked: boolean;
+  onPrepare: (todoId: string) => void;
+}
+
+function prepRunning(prep: Prep | null): boolean {
+  return prep !== null && (prep.run?.state === "running" || (prep.run === null && !prep.problem));
+}
+
+function prepRetryable(prep: Prep): boolean {
+  return prep.problem !== null || prep.run?.state === "failed" || prep.run?.state === "interrupted";
+}
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -68,16 +101,82 @@ function RunLine({ run, t }: { run: AssistantRun; t: Strings }) {
   return null;
 }
 
+function PrepLine({ prep, t }: { prep: Prep; t: Strings }) {
+  const { run, problem } = prep;
+  if (problem) {
+    switch (problem.kind) {
+      case "busy":
+        return <p className="muted">{t.runBusy}</p>;
+      case "lost":
+        return <p className="error">{t.runLost}</p>;
+      case "conflict":
+        return <p className="error">{t.prepConflict}</p>;
+      case "source":
+        return <p className="error">{t.prepSourceUnavailable}</p>;
+      case "start":
+        return (
+          <p className="error">
+            {t.prepStartError}: {problem.message}
+          </p>
+        );
+      case "status":
+        return (
+          <p className="error">
+            {t.runStatusError}: {problem.message}
+          </p>
+        );
+    }
+  }
+  if (run?.state === "failed") {
+    return (
+      <p className="error" data-testid="briefing-preparation-failed">
+        {t.prepFailed}: {t[RUN_ERROR_LABEL[run.errorCode ?? "internal"]]}
+      </p>
+    );
+  }
+  if (run?.state === "interrupted") return <p className="error">{t.prepInterrupted}</p>;
+  return null;
+}
+
+function PrepAction({
+  todoId,
+  controls,
+  t,
+}: {
+  todoId: string;
+  controls: PrepControls;
+  t: Strings;
+}) {
+  const mine = controls.prep?.todoId === todoId ? controls.prep : null;
+  const running = prepRunning(mine);
+  const state = running ? "running" : (mine?.problem?.kind ?? mine?.run?.state ?? "idle");
+  return (
+    <div className="briefing-prep" data-testid="briefing-prep" data-state={state}>
+      <button
+        type="button"
+        data-testid="briefing-prepare"
+        disabled={running || controls.blocked}
+        onClick={() => controls.onPrepare(todoId)}
+      >
+        {running ? t.preparing : mine && prepRetryable(mine) ? t.briefingRetry : t.prepare}
+      </button>
+      {mine && <PrepLine prep={mine} t={t} />}
+    </div>
+  );
+}
+
 function BriefingView({
   briefing,
   run,
   now,
   t,
+  controls,
 }: {
   briefing: Briefing;
   run: AssistantRun | null;
   now: number;
   t: Strings;
+  controls: PrepControls;
 }) {
   const current = run === null || run.kind !== "briefing" || run.targetId === briefing.id;
   return (
@@ -174,6 +273,9 @@ function BriefingView({
                     </a>
                   )}
                 </div>
+                {preparationEligible && (
+                  <PrepAction todoId={ref.todoId} controls={controls} t={t} />
+                )}
               </li>
             );
           })}
@@ -204,6 +306,60 @@ export function BriefingPage() {
   const pendingRef = useRef<string | null>(null);
   const stopRef = useRef<(() => void) | null>(null);
   const mountedRef = useRef(false);
+  const navigate = useNavigate();
+  const [prep, setPrep] = useState<Prep | null>(null);
+  /** The unanswered (lost) preparation request: its id is reused ONLY to retry that response. */
+  const prepPendingRef = useRef<{ todoId: string; requestId: string } | null>(null);
+  const prepStopRef = useRef<(() => void) | null>(null);
+
+  const openPacket = useCallback(
+    (packetId: string) => {
+      void navigate(`/preparations/${pathId(packetId)}`);
+    },
+    [navigate],
+  );
+
+  /** Follows a prepare run until it ends; a success opens its packet. */
+  const watchPrep = useCallback(
+    (todoId: string, runId: string) => {
+      prepStopRef.current?.();
+      prepStopRef.current = pollAssistantRun({
+        runId,
+        fetchRun: api.getRun,
+        onRun: (r) => setPrep({ todoId, run: r, problem: null }),
+        onFinished: (r) => {
+          if (r.state === "succeeded" && r.targetId && mountedRef.current) openPacket(r.targetId);
+        },
+        onError: (err) => {
+          // Permanent answers stop polling; transient ones are shown and polling continues.
+          if (isUnavailable(err)) {
+            prepStopRef.current?.();
+            setUnavailable(true);
+          } else if (err instanceof ApiError && err.apiCode === "not_found") {
+            prepStopRef.current?.();
+            setPrep({ todoId, run: null, problem: { kind: "status", message: errorText(err) } });
+          } else {
+            setPrep((p) => ({
+              todoId,
+              run: p?.todoId === todoId ? p.run : null,
+              problem: { kind: "status", message: errorText(err) },
+            }));
+          }
+        },
+      });
+    },
+    [openPacket],
+  );
+
+  /** A prepare run seen outside a Prepare click (on mount, or as the busy run): show it. */
+  const adoptPrep = useCallback(
+    (r: AssistantRun) => {
+      if (r.kind !== "prepare" || r.sourceTodoId === null || r.state === "succeeded") return;
+      setPrep({ todoId: r.sourceTodoId, run: r, problem: null });
+      if (r.state === "running") watchPrep(r.sourceTodoId, r.id);
+    },
+    [watchPrep],
+  );
 
   /**
    * A run succeeded: read its snapshot, then show run + snapshot TOGETHER, so the old snapshot is
@@ -261,8 +417,12 @@ export function BriefingPage() {
     Promise.all([api.getLatestRun(), api.getLatestBriefing()])
       .then(([latestRun, latestBriefing]) => {
         if (!mountedRef.current) return;
-        setRun(latestRun);
         setBriefing(latestBriefing);
+        if (latestRun?.kind === "prepare") {
+          adoptPrep(latestRun);
+          return;
+        }
+        setRun(latestRun);
         if (latestRun?.state === "running") watch(latestRun.id);
       })
       .catch((err: unknown) => {
@@ -276,8 +436,9 @@ export function BriefingPage() {
       mountedRef.current = false;
       clearInterval(tick);
       stopRef.current?.();
+      prepStopRef.current?.();
     };
-  }, [watch]);
+  }, [watch, adoptPrep]);
 
   const build = async () => {
     // One id per intentional action; a pending (unanswered) one is reused by Retry.
@@ -304,6 +465,10 @@ export function BriefingPage() {
     if (outcome.kind === "busy") setProblem({ kind: "busy" });
     const next = outcome.run;
     if (!next) return;
+    if (next.kind === "prepare") {
+      adoptPrep(next);
+      return;
+    }
     if (next.state === "succeeded") {
       showSucceeded(next);
       return;
@@ -312,7 +477,66 @@ export function BriefingPage() {
     if (next.state === "running") watch(next.id);
   };
 
+  const prepare = async (todoId: string) => {
+    if (!briefing) return;
+    // One id per intentional click; only a lost (unanswered) request for this card reuses its id.
+    const pending = prepPendingRef.current;
+    const requestId =
+      pending?.todoId === todoId && prep?.todoId === todoId && prep.problem?.kind === "lost"
+        ? pending.requestId
+        : crypto.randomUUID();
+    prepPendingRef.current = { todoId, requestId };
+    prepStopRef.current?.();
+    setPrep({ todoId, run: null, problem: null });
+    const outcome = await prepareOrRecover(requestId, {
+      start: (id) => api.startPreparation({ requestId: id, briefingId: briefing.id, todoId }),
+      latestRun: api.getLatestRun,
+    });
+    if (!mountedRef.current) return;
+    if (outcome.kind === "lost") {
+      setPrep({ todoId, run: null, problem: { kind: "lost" } });
+      return;
+    }
+    prepPendingRef.current = null;
+    if (outcome.kind === "packet") {
+      openPacket(outcome.packet.id);
+      return;
+    }
+    if (outcome.kind === "error") {
+      const code = outcome.error.apiCode;
+      if (code === "assistant_unavailable") {
+        setPrep(null);
+        setUnavailable(true);
+      } else if (code === "revision_conflict") {
+        setPrep({ todoId, run: null, problem: { kind: "conflict" } });
+      } else if (code === "source_unavailable") {
+        setPrep({ todoId, run: null, problem: { kind: "source" } });
+      } else {
+        const message = errorText(outcome.error);
+        setPrep({ todoId, run: null, problem: { kind: "start", message } });
+      }
+      return;
+    }
+    if (outcome.kind === "busy") {
+      setPrep({ todoId, run: null, problem: { kind: "busy" } });
+      return;
+    }
+    const next = outcome.run;
+    if (next.state === "succeeded" && next.targetId) {
+      openPacket(next.targetId);
+      return;
+    }
+    setPrep({ todoId, run: next, problem: null });
+    if (next.state === "running") watchPrep(todoId, next.id);
+  };
+
+  const preparing = prepRunning(prep);
   const running = starting || run?.state === "running";
+  const controls: PrepControls = {
+    prep,
+    blocked: running || preparing,
+    onPrepare: (todoId) => void prepare(todoId),
+  };
   return (
     <section>
       <h1>{t.navBriefing}</h1>
@@ -328,7 +552,7 @@ export function BriefingPage() {
           <button
             type="button"
             data-testid="briefing-generate"
-            disabled={running || briefing === undefined}
+            disabled={running || preparing || briefing === undefined}
             onClick={() => void build()}
           >
             {running
@@ -367,7 +591,9 @@ export function BriefingPage() {
           {t.briefingNone}
         </p>
       )}
-      {briefing && <BriefingView briefing={briefing} run={run} now={now} t={t} />}
+      {briefing && (
+        <BriefingView briefing={briefing} run={run} now={now} t={t} controls={controls} />
+      )}
     </section>
   );
 }

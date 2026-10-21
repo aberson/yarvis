@@ -8,11 +8,13 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { REPO_ROOT, resolvePaths } from "../src/config/paths.js";
 import { decisionsFile, messagesFile } from "../src/pipeline/cache.js";
-import { BIND_HOST, startServer, type StartedServer } from "../src/main.js";
+import { BIND_HOST, startServer, type StartedServer, type StartOverrides } from "../src/main.js";
 import { tempPaths } from "./helpers.js";
-import type { AssistantRun, Briefing } from "@yarvis/shared";
+import type { AssistantRun, Briefing, PreparationPacket } from "@yarvis/shared";
 import { AssistantStore, assistantDbFile, assistantLockFile } from "../src/assistant/store.js";
-import { plantLiveAssistantLock } from "./assistant-helpers.js";
+import { gatedSheets, plantLiveAssistantLock } from "./assistant-helpers.js";
+import { COMPOSE_PROMPT_VERSION, type Composer } from "../src/ai/compose.js";
+import { FAKE_COMPOSER_MODEL } from "../src/fakes/composer.js";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -110,9 +112,14 @@ describe("main.ts process", () => {
 
 describe("startServer assistant lifecycle (plan S1, Step 9)", () => {
   const R1 = "50000000-0000-4000-8000-000000000001";
+  const R2 = "50000000-0000-4000-8000-000000000002";
 
-  async function start(privateDir: string): Promise<StartedServer> {
-    return startServer({ PORT: "0", YARVIS_FAKE: "1", YARVIS_PRIVATE_DIR: privateDir });
+  async function start(privateDir: string, overrides: StartOverrides = {}): Promise<StartedServer> {
+    return startServer(
+      { PORT: "0", YARVIS_FAKE: "1", YARVIS_PRIVATE_DIR: privateDir },
+      REPO_ROOT,
+      overrides,
+    );
   }
 
   async function json<T>(url: string, init?: RequestInit): Promise<{ status: number; body: T }> {
@@ -222,32 +229,132 @@ describe("startServer assistant lifecycle (plan S1, Step 9)", () => {
     expect(assistant.body.error).toBe("assistant_unavailable");
   });
 
-  it("close() with a run in flight settles it (never left running) and releases lock + DB", async () => {
+  it("close() with a briefing read in flight interrupts it (shutdown), publishes nothing, releases lock + DB", async () => {
     const { paths, cleanup } = tempPaths({ seedSettings: true });
     cleanups.push(cleanup);
-    const s = await start(paths.privateDir);
+    // The source read is HELD until close() has run, so the outcome is deterministic on any OS.
+    const sheets = gatedSheets();
+    const s = await start(paths.privateDir, { sheets: sheets.gated });
     let closed = false;
     cleanups.push(() => (closed ? undefined : s.close()));
+    const gate = sheets.hold();
     const posted = await json<{ run: AssistantRun }>(`${s.url}/api/assistant/briefings`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Yarvis": "1" },
       body: JSON.stringify({ requestId: R1 }),
     });
     expect(posted.status).toBe(202);
-    await s.close(); // immediately, without waiting for the run
+    await gate.started;
+    const closing = s.close();
+    gate.release(); // the read settles only after shutdown began: its result must be discarded
+    await closing;
     closed = true;
     expect(existsSync(assistantLockFile(paths))).toBe(false);
     const reopened = AssistantStore.open(paths);
     const run = reopened.getRun(posted.body.run.id);
     const counts = reopened.counts();
     reopened.close();
-    expect(
-      run?.state === "succeeded" || (run?.state === "interrupted" && run.errorCode === "shutdown"),
-    ).toBe(true);
-    // A shutdown-interrupted run never published a snapshot afterwards.
-    expect(counts.briefings).toBe(run?.state === "succeeded" ? 1 : 0);
+    expect(run).toMatchObject({ state: "interrupted", errorCode: "shutdown" });
+    expect(counts.briefings).toBe(0);
     // The production close released the server's SQLite handle (an open file cannot be removed
     // on Windows).
     rmSync(assistantDbFile(paths));
+  });
+
+  it("fake mode wires the FakeComposer: briefing -> prepare -> packet through the real server", async () => {
+    const { paths, cleanup } = tempPaths({ seedSettings: true });
+    cleanups.push(cleanup);
+    const s = await start(paths.privateDir);
+    cleanups.push(() => s.close());
+    const headers = { "Content-Type": "application/json", "X-Yarvis": "1" };
+    const b = await json<{ run: AssistantRun }>(`${s.url}/api/assistant/briefings`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ requestId: R1 }),
+    });
+    expect((await waitRun(s.url, b.body.run.id)).state).toBe("succeeded");
+    const briefing = (await json<{ briefing: Briefing }>(`${s.url}/api/assistant/briefings/latest`))
+      .body.briefing;
+    const item = briefing.items.find((i) => i.preparationEligible);
+    expect(item).toBeDefined();
+    const p = await json<{ run: AssistantRun }>(`${s.url}/api/assistant/preparations`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        requestId: R2,
+        briefingId: briefing.id,
+        todoId: item?.sourceRef.todoId,
+      }),
+    });
+    expect(p.status).toBe(202);
+    const done = await waitRun(s.url, p.body.run.id);
+    expect(done).toMatchObject({ state: "succeeded", model: FAKE_COMPOSER_MODEL });
+    const packet = await json<{ packet: PreparationPacket }>(
+      `${s.url}/api/assistant/preparations/${done.targetId}`,
+    );
+    expect(packet.status).toBe(200);
+    expect(packet.body.packet).toMatchObject({
+      todoId: item?.sourceRef.todoId,
+      revision: 1,
+      state: "open",
+      model: FAKE_COMPOSER_MODEL,
+    });
+  });
+
+  it("close() with composition in flight aborts it, interrupts the run and commits no late packet", async () => {
+    const { paths, cleanup } = tempPaths({ seedSettings: true });
+    cleanups.push(cleanup);
+    let signal: AbortSignal | undefined;
+    let finishLate!: () => void;
+    const composer: Composer = {
+      compose: (_input, opts) => {
+        signal = opts.signal;
+        // Answers successfully only when the test says so: a late result after close().
+        return new Promise((resolve) => {
+          finishLate = () =>
+            resolve({
+              ok: true,
+              composition: { draft: "late", checklist: ["late"], questions: [] },
+              model: "late",
+              promptVersion: COMPOSE_PROMPT_VERSION,
+            });
+        });
+      },
+    };
+    const s = await start(paths.privateDir, { composer });
+    let closed = false;
+    cleanups.push(() => (closed ? undefined : s.close()));
+    const headers = { "Content-Type": "application/json", "X-Yarvis": "1" };
+    const b = await json<{ run: AssistantRun }>(`${s.url}/api/assistant/briefings`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ requestId: R1 }),
+    });
+    await waitRun(s.url, b.body.run.id);
+    const briefing = (await json<{ briefing: Briefing }>(`${s.url}/api/assistant/briefings/latest`))
+      .body.briefing;
+    const item = briefing.items.find((i) => i.preparationEligible);
+    const p = await json<{ run: AssistantRun }>(`${s.url}/api/assistant/preparations`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        requestId: R2,
+        briefingId: briefing.id,
+        todoId: item?.sourceRef.todoId,
+      }),
+    });
+    expect(p.status).toBe(202);
+    const closing = s.close();
+    expect(signal?.aborted).toBe(true);
+    finishLate();
+    await closing;
+    closed = true;
+    expect(existsSync(assistantLockFile(paths))).toBe(false);
+    const reopened = AssistantStore.open(paths);
+    const run = reopened.getRun(p.body.run.id);
+    const counts = reopened.counts();
+    reopened.close();
+    expect(run).toMatchObject({ state: "interrupted", errorCode: "shutdown", targetId: null });
+    expect(counts.packets).toBe(0);
   });
 });

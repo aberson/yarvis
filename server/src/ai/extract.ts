@@ -457,8 +457,11 @@ function asRecord(v: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-/** The result envelope: the object itself, or the last `type: "result"` event of an array. */
-function findEnvelope(parsed: unknown): Record<string, unknown> | undefined {
+/**
+ * The result envelope: the object itself, or the last `type: "result"` event of an array.
+ * Exported as the ONE envelope-shape rule (ai/compose.ts reuses it).
+ */
+export function findEnvelope(parsed: unknown): Record<string, unknown> | undefined {
   if (Array.isArray(parsed)) {
     for (let i = parsed.length - 1; i >= 0; i--) {
       const ev = asRecord(parsed[i]);

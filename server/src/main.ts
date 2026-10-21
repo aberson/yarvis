@@ -6,6 +6,8 @@ import { loadPrivateEnv } from "./config/env.js";
 import { isFakeMode, REPO_ROOT, resolvePaths, resolvePorts, type Env } from "./config/paths.js";
 import { isMainModule } from "./util/is-main.js";
 import { resetFakePipelineState } from "./pipeline/seams.js";
+import type { SheetsStore } from "./connectors/sheets.js";
+import type { Composer } from "./ai/compose.js";
 
 export const BIND_HOST = "127.0.0.1";
 
@@ -19,10 +21,20 @@ export interface StartedServer {
   close(): Promise<void>;
 }
 
-/** `repoRoot` is injectable so tests can point the default private dirs at a temp tree. */
+/** Test-only overrides of the external boundaries (default: the mode's production wiring). */
+export interface StartOverrides {
+  sheets?: SheetsStore;
+  composer?: Composer;
+}
+
+/**
+ * `repoRoot` is injectable so tests can point the default private dirs at a temp tree; `overrides`
+ * lets lifecycle tests hold a Sheets read or a composition open across close().
+ */
 export async function startServer(
   env: Env = process.env,
   repoRoot: string = REPO_ROOT,
+  overrides: StartOverrides = {},
 ): Promise<StartedServer> {
   const paths = resolvePaths(env, repoRoot);
   loadPrivateEnv(paths);
@@ -33,8 +45,8 @@ export async function startServer(
   // Assistant (plan S1): open its SQLite store and reconcile abandoned runs under the assistant
   // lock before serving. Any assistant failure (corrupt/newer/unwritable store, unusable lock path)
   // only makes /api/assistant/* answer 503; the server and Todos still start.
-  const sheets = defaultSheetsStore({ paths, fake }, env);
-  const assistant = defaultAssistantService({ paths, fake }, sheets);
+  const sheets = overrides.sheets ?? defaultSheetsStore({ paths, fake }, env);
+  const assistant = defaultAssistantService({ paths, fake }, sheets, overrides.composer);
   await assistant.init().catch((err: unknown) => {
     // init() already fails closed; this guard keeps any surprise from stopping the server.
     console.error(

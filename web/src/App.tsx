@@ -1,6 +1,7 @@
 // App shell: logo + wordmark, nav (Briefing, Todos, Quarantine, Controls — D12, D40, S1) + routes
 // (plan §5). `/` (the Desktop shortcut's landing URL) redirects to /briefing (S1 Step 9); the old
-// /apps and /settings routes redirect to /controls so bookmarks keep working.
+// /apps and /settings routes redirect to /controls so bookmarks keep working. /preparations/:id
+// opens one saved preparation packet (S1 Step 10).
 import { useCallback, useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes } from "react-router";
 import type { Settings, SettingsResponse } from "@yarvis/shared";
@@ -8,6 +9,7 @@ import { api } from "./api.js";
 import { PirateContext, usePirate, type StringKey } from "./i18n/strings.js";
 import { BriefingPage } from "./pages/Briefing.js";
 import { ControlsPage } from "./pages/Controls.js";
+import { PreparationPage } from "./pages/Preparation.js";
 import { QuarantinePage } from "./pages/Quarantine.js";
 import { TodosPage } from "./pages/Todos.js";
 import { Logo } from "./ui/logos.js";
@@ -56,6 +58,7 @@ function Shell({
         <Routes>
           <Route path="/" element={<Navigate to="/briefing" replace />} />
           <Route path="/briefing" element={<BriefingPage />} />
+          <Route path="/preparations/:id" element={<PreparationPage />} />
           <Route path="/todos" element={<TodosPage settings={settings} />} />
           <Route path="/quarantine" element={<QuarantinePage />} />
           <Route

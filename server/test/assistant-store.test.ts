@@ -4,7 +4,7 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { ASSISTANT_SCHEMA_VERSION, type Briefing } from "@yarvis/shared";
+import { ASSISTANT_SCHEMA_VERSION, type Briefing, type PreparationPacket } from "@yarvis/shared";
 import {
   AssistantBusyError,
   AssistantStore,
@@ -294,5 +294,60 @@ describe("runs and briefings", () => {
     const store = open(dir());
     store.close();
     expectUnavailable(() => store.latestRun(), "closed");
+  });
+});
+
+describe("run retention covers preparation runs (Step 10)", () => {
+  it("finished prepare runs are bounded; a packet's run and the packet are kept", () => {
+    const store = open(dir());
+    const id = (n: number) => `33333333-3333-4333-8333-${n.toString(16).padStart(12, "0")}`;
+    const at = "2026-10-21T10:00:00.000Z";
+    store.insertRun({
+      id: id(0),
+      requestId: id(1),
+      requestHash: "h",
+      kind: "prepare",
+      createdAt: at,
+    });
+    const packet: PreparationPacket = {
+      id: id(2),
+      todoId: "gmail:00000000000000aa#1",
+      sourceRef: {
+        todoId: "gmail:00000000000000aa#1",
+        source: "gmail",
+        sender: "s@example.test",
+        context: "c",
+        messageDate: at,
+        link: "",
+        originalText: "t",
+        action: "a",
+        extractionStatus: "done",
+      },
+      createdAt: at,
+      updatedAt: at,
+      revision: 1,
+      state: "open",
+      draft: "",
+      checklist: [{ id: id(3), text: "x", done: false }],
+      questions: [],
+      model: "m",
+      promptVersion: "compose-v1",
+    };
+    expect(store.commitPacket(id(0), packet)).toEqual(packet);
+    for (let n = 0; n < RUN_RETENTION + 20; n++) {
+      const runId = id(0x1000 + n);
+      store.insertRun({
+        id: runId,
+        requestId: id(0x100000 + n),
+        requestHash: "h",
+        kind: "prepare",
+        createdAt: at,
+      });
+      store.finishRun(runId, "failed", "compose_failed", at);
+    }
+    expect(store.counts().runs).toBeLessThanOrEqual(RUN_RETENTION + 1);
+    expect(store.getRun(id(0))).toMatchObject({ state: "succeeded", targetId: id(2) });
+    expect(store.getPacket(id(2))).toEqual(packet);
+    expect(store.getRun(id(0x1000))).toBeNull(); // the oldest failed attempt was pruned
   });
 });

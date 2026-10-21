@@ -36,12 +36,17 @@ export type RunState = (typeof RUN_STATES)[number];
  *   - run_timeout: the 90 s logical deadline passed first;
  *   - shutdown: the server closed while the run was in flight (state interrupted);
  *   - abandoned: found `running` at startup after its owner died (state interrupted);
- *   - compose_*: reserved for preparation (Step 10);
+ *   - source_changed: (prepare) the selected task changed, left the open/screened set or was never
+ *     eligible since the briefing; nothing was sent to the model (build a new briefing);
+ *   - compose_timeout: (prepare) the model call hit its bounded timeout;
+ *   - compose_invalid: (prepare) the CLI answered but not with a valid envelope / strict Composition;
+ *   - compose_failed: (prepare) the CLI could not run, exited non-zero or reported an error;
  *   - internal: anything else.
  */
 export const RUN_ERROR_CODES = [
   "source_unavailable",
   "sheets_not_configured",
+  "source_changed",
   "run_timeout",
   "shutdown",
   "abandoned",
@@ -135,6 +140,68 @@ export interface LatestRunResponse {
 export interface LatestBriefingResponse {
   briefing: Briefing | null;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Preparation packets (Step 10): one saved, editable-later response draft + checklist per Todo.
+
+/** Composition bounds (S1.5): shared by the server's strict parser, the store and the UI. */
+export const DRAFT_MAX_CHARS = 6_000;
+export const CHECKLIST_MIN_ITEMS = 1;
+export const CHECKLIST_MAX_ITEMS = 12;
+export const CHECKLIST_ITEM_MAX_CHARS = 500;
+export const QUESTIONS_MAX_ITEMS = 8;
+export const QUESTION_MAX_CHARS = 300;
+/** A Todo id is at most this long in a request body. */
+export const TODO_ID_MAX_CHARS = 200;
+
+export const PACKET_STATES = ["open", "handled"] as const;
+export type PacketState = (typeof PACKET_STATES)[number];
+
+/** The model-only output object: exactly these fields (no extras), within the bounds above. */
+export interface Composition {
+  /** May be empty when a response cannot responsibly be prepared. */
+  draft: string;
+  checklist: string[];
+  questions: string[];
+}
+
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
+export interface PreparationPacket {
+  id: string;
+  todoId: string;
+  /** The briefing item's source capture the packet was generated from (not current eligibility). */
+  sourceRef: SourceRef;
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+  state: PacketState;
+  draft: string;
+  checklist: ChecklistItem[];
+  questions: string[];
+  model: string;
+  promptVersion: string;
+}
+
+/** POST /api/assistant/preparations body. */
+export interface StartPreparationRequest {
+  requestId: string;
+  briefingId: string;
+  todoId: string;
+}
+
+/**
+ * POST /api/assistant/preparations: 202 `{run}` for admitted (or replayed) work, 200 `{packet}`
+ * when the Todo already has a packet (no model call). GET /api/assistant/preparations/:id: `{packet}`.
+ */
+export interface PacketResponse {
+  packet: PreparationPacket;
+}
+export type StartPreparationResponse = RunResponse | PacketResponse;
 
 /** A canonical lowercase/uppercase hex UUID (8-4-4-4-12). */
 export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -18,6 +18,19 @@
 //   - close(): stops admissions, marks the owned run interrupted/shutdown (so no late success),
 //     waits for its outstanding I/O to settle and the lock to be released, then closes the DB.
 //
+// Preparation (Step 10, S1.5 "Preparation behavior"): POST resolves briefingId + todoId to a STORED
+// briefing item (unknown / not eligible -> 409 revision_conflict). A Todo that already has a packet
+// takes the fast path: one transaction records a succeeded prepare run (unique request id, hash,
+// target) and the packet is returned with no model call, even while another run is active.
+// Otherwise the run is admitted like a briefing (busy, lock, re-checks under the lock), recorded
+// `running`, and the selected Todo + current Quarantine are re-read FRESH: any changed SourceRef
+// field, a missing / no-longer-open / not-done / quarantined Todo fails the run `source_changed`
+// and the POST answers 409 revision_conflict; a failed read fails it and answers 503
+// source_unavailable. Only then is the POST answered 202 and the composer called (never after the
+// deadline or shutdown) with timeout = min(60 s, remaining deadline) and an AbortSignal the deadline
+// and close() fire. Only a validated Composition is stored, in one transaction that applies only
+// while that exact run is still running. Retry is a new request id; nothing is replayed.
+//
 // Briefing composition reads FRESH Todos + Quarantine through the SheetsStore (not the 10 s
 // TodosCache), applies the unchanged `visibleTodos` rule, keeps `status=open`, sorts by
 // `message_date` descending with the Todo id as a lexical tie-break and caps at 25 items. Either
@@ -30,6 +43,7 @@ import {
   type AssistantRun,
   type Briefing,
   type BriefingItem,
+  type PreparationPacket,
   type QuarantineItem,
   type RunErrorCode,
   type Source,
@@ -37,6 +51,12 @@ import {
   type Todo,
 } from "@yarvis/shared";
 import type { Paths } from "../config/paths.js";
+import {
+  COMPOSE_PROMPT_VERSION,
+  COMPOSE_TIMEOUT_CAP_MS,
+  type ComposeOutcome,
+  type Composer,
+} from "../ai/compose.js";
 import { QUARANTINE, SheetsError, TODOS, type SheetsStore } from "../connectors/sheets.js";
 import {
   acquireLock,
@@ -51,8 +71,10 @@ import {
   AssistantStore,
   AssistantUnavailableError,
   assistantLockFile,
+  isConstraint,
   RequestConflictError,
   requestHash,
+  type RunMeta,
 } from "./store.js";
 
 export type SourceConfigured = Record<Source, boolean>;
@@ -72,16 +94,86 @@ export interface AssistantServiceOptions {
   warn?: (line: string) => void;
   /** Lock options (tests inject a failing `unlink` to simulate a Windows release failure). */
   lockOptions?: Pick<LockOptions, "unlink">;
+  /**
+   * The preparation composer: the CLI-backed ClaudeComposer in real mode, FakeComposer in fake
+   * mode (index.ts). Without one, preparation answers 503 assistant_unavailable.
+   */
+  composer?: Composer;
+  /** Upper bound of one model call (default 60 s; injectable for tests). */
+  composeTimeoutCapMs?: number;
 }
 
 interface ActiveRun {
   runId: string | null;
   /** Settles when the run's I/O has settled and its lock is released. */
   done: Promise<void>;
+  /** Aborts owned composition (deadline / close). */
+  abort?: () => void;
 }
 
 /** `[kind, ...args]`: the normalized briefing request has no arguments. */
 const BRIEFING_REQUEST = ["briefing"] as const;
+
+/** The selected task changed or is not eligible: 409 revision_conflict, no model call. */
+export class SourceConflictError extends Error {
+  constructor() {
+    super("the selected task changed or is not eligible; refresh and build a new briefing");
+    this.name = "SourceConflictError";
+  }
+}
+
+/** The selected task could not be verified against the sheet: 503 source_unavailable. */
+export class SourceUnavailableError extends Error {
+  constructor() {
+    super("could not verify the selected task against the sheet");
+    this.name = "SourceUnavailableError";
+  }
+}
+
+export interface PrepareRequest {
+  requestId: string;
+  briefingId: string;
+  todoId: string;
+}
+
+/** POST /api/assistant/preparations: follow `run` (202) or open the existing `packet` (200). */
+export type PrepareOutcome =
+  { kind: "run"; run: AssistantRun } | { kind: "packet"; packet: PreparationPacket };
+
+/** `[kind, briefingId, todoId]`: the fixed ordered normalized prepare request. */
+function prepareRequest(req: PrepareRequest): readonly string[] {
+  return ["prepare", req.briefingId, req.todoId];
+}
+
+const SOURCE_REF_KEYS = [
+  "todoId",
+  "source",
+  "sender",
+  "context",
+  "messageDate",
+  "link",
+  "originalText",
+  "action",
+  "extractionStatus",
+] as const satisfies ReadonlyArray<keyof SourceRef>;
+
+/**
+ * Whether the stored briefing item's source still holds: the Todo exists once, is visible (not
+ * quarantined), open, extracted (`done`), and every SourceRef field equals the saved capture.
+ */
+export function sourceStillCurrent(
+  item: BriefingItem,
+  todos: readonly Todo[],
+  quarantine: readonly QuarantineItem[],
+): boolean {
+  if (!item.preparationEligible) return false;
+  const matches = todos.filter((t) => t.id === item.sourceRef.todoId);
+  if (matches.length !== 1) return false;
+  const current = visibleTodos(matches, quarantine)[0];
+  if (!current || current.status !== "open" || current.extraction_status !== "done") return false;
+  const ref = sourceRefOf(current);
+  return SOURCE_REF_KEYS.every((k) => ref[k] === item.sourceRef[k]);
+}
 
 function compareTodos(a: Todo, b: Todo): number {
   const ta = Date.parse(a.message_date);
@@ -157,6 +249,7 @@ export class AssistantService {
   private closed: Promise<void> | null = null;
   private readonly now: () => number;
   private readonly deadlineMs: number;
+  private readonly composeCapMs: number;
   private readonly newId: () => string;
   private readonly warn: (line: string) => void;
   private readonly lockFile: string;
@@ -170,6 +263,7 @@ export class AssistantService {
   constructor(private readonly opts: AssistantServiceOptions) {
     this.now = opts.now ?? Date.now;
     this.deadlineMs = opts.deadlineMs ?? ASSISTANT_RUN_DEADLINE_MS;
+    this.composeCapMs = opts.composeTimeoutCapMs ?? COMPOSE_TIMEOUT_CAP_MS;
     this.newId = opts.newId ?? randomUUID;
     this.warn = opts.warn ?? ((line) => console.error(line));
     this.lockFile = assistantLockFile(opts.paths);
@@ -291,24 +385,7 @@ export class AssistantService {
     const hash = requestHash(BRIEFING_REQUEST);
     const replay = this.replay(requestId, hash);
     if (replay) return replay;
-    if (this.active) throw new AssistantBusyError();
-    // Claimed synchronously, so a concurrent in-process request is busy without racing the lock.
-    let settle!: () => void;
-    const active: ActiveRun = { runId: null, done: new Promise<void>((r) => (settle = r)) };
-    this.active = active;
-    let lock: LockHandle;
-    try {
-      lock = await this.acquire();
-    } catch (err) {
-      this.active = null;
-      settle();
-      if (err instanceof LockHeldError) throw new AssistantBusyError();
-      // The lock path itself is unusable (permissions, a directory in the way): 503, not 500.
-      this.warn(
-        `[yarvis] assistant lock unavailable: ${err instanceof Error ? err.name : "error"}`,
-      );
-      throw new AssistantUnavailableError("open_failed");
-    }
+    const { active, settle, lock } = await this.admit();
     let run: AssistantRun;
     try {
       if (this.closing) throw new AssistantUnavailableError("closed");
@@ -342,6 +419,30 @@ export class AssistantService {
       settle();
     });
     return run;
+  }
+
+  /**
+   * Claims the one in-process run slot (synchronously, so a concurrent in-process request is busy
+   * without racing the lock), then the cross-process assistant lock. Busy -> AssistantBusyError;
+   * an unusable lock path -> 503 AssistantUnavailableError.
+   */
+  private async admit(): Promise<{ active: ActiveRun; settle: () => void; lock: LockHandle }> {
+    if (this.active) throw new AssistantBusyError();
+    let settle!: () => void;
+    const active: ActiveRun = { runId: null, done: new Promise<void>((r) => (settle = r)) };
+    this.active = active;
+    try {
+      return { active, settle, lock: await this.acquire() };
+    } catch (err) {
+      this.active = null;
+      settle();
+      if (err instanceof LockHeldError) throw new AssistantBusyError();
+      // The lock path itself is unusable (permissions, a directory in the way): 503, not 500.
+      this.warn(
+        `[yarvis] assistant lock unavailable: ${err instanceof Error ? err.name : "error"}`,
+      );
+      throw new AssistantUnavailableError("open_failed");
+    }
   }
 
   private replay(requestId: string, hash: string): AssistantRun | null {
@@ -405,23 +506,266 @@ export class AssistantService {
       this.finish(store, run.id, "failed", "internal");
     } finally {
       clearTimeout(timer);
+      this.ensureEnded(store, run.id);
       await this.release(lock);
     }
   }
 
-  /** Guarded terminal write; a closed or contended store is reported, never thrown. */
+  getPacket(id: string): PreparationPacket | null {
+    return this.db().getPacket(id);
+  }
+
+  /**
+   * POST /api/assistant/preparations. A repeated request id with the same input replays (its
+   * packet once succeeded, else its run); a changed input is a RequestConflictError. Resolves once
+   * the source is verified (202 run) or with the existing packet (200); throws SourceConflictError
+   * (409), SourceUnavailableError (503), AssistantBusyError, AssistantUnavailableError.
+   */
+  async startPreparation(req: PrepareRequest): Promise<PrepareOutcome> {
+    const composer = this.opts.composer;
+    if (!composer) throw new AssistantUnavailableError("open_failed");
+    const hash = requestHash(prepareRequest(req));
+    const replay = this.replayPrepare(req.requestId, hash);
+    if (replay) return replay;
+    const item = this.resolveItem(req);
+    const fast = this.existingPacket(req, hash);
+    if (fast) return fast;
+    const { active, settle, lock } = await this.admit();
+    let run: AssistantRun;
+    try {
+      if (this.closing) throw new AssistantUnavailableError("closed");
+      // Re-checked under the lock: another process may have admitted this request id, or
+      // prepared this Todo, meanwhile.
+      const raced = this.replayPrepare(req.requestId, hash) ?? this.existingPacket(req, hash);
+      if (raced) {
+        await this.release(lock);
+        this.active = null;
+        settle();
+        return raced;
+      }
+      const store = this.db();
+      // We hold the lock, so any other `running` row was abandoned by a dead owner.
+      store.interruptRunning(this.iso());
+      run = store.insertRun({
+        id: this.newId(),
+        requestId: req.requestId,
+        requestHash: hash,
+        kind: "prepare",
+        createdAt: this.iso(),
+        sourceTodoId: req.todoId,
+      });
+    } catch (err) {
+      await this.release(lock);
+      this.active = null;
+      settle();
+      throw err;
+    }
+    active.runId = run.id;
+    let verified!: (refusal: Error | null) => void;
+    const verification = new Promise<Error | null>((r) => (verified = r));
+    void this.executePreparation(run, lock, item, composer, active, verified).finally(() => {
+      if (this.active === active) this.active = null;
+      settle();
+    });
+    const refusal = await verification;
+    if (refusal) throw refusal;
+    if (this.closing) throw new AssistantUnavailableError("closed");
+    return { kind: "run", run: this.db().getRun(run.id) ?? run };
+  }
+
+  /** A stored request id: same input replays (packet once succeeded), changed input conflicts. */
+  private replayPrepare(requestId: string, hash: string): PrepareOutcome | null {
+    const run = this.replay(requestId, hash);
+    if (!run) return null;
+    if (run.state === "succeeded" && run.targetId) {
+      const packet = this.db().getPacket(run.targetId);
+      if (packet) return { kind: "packet", packet };
+    }
+    return { kind: "run", run };
+  }
+
+  /** The stored briefing item for the request; unknown or never eligible -> SourceConflictError. */
+  private resolveItem(req: PrepareRequest): BriefingItem {
+    const briefing = this.db().getBriefing(req.briefingId);
+    const item = briefing?.items.find((i) => i.sourceRef.todoId === req.todoId);
+    if (!item?.preparationEligible) throw new SourceConflictError();
+    return item;
+  }
+
+  /** The fast path: the Todo already has a packet -> record a succeeded run and return it. */
+  private existingPacket(req: PrepareRequest, hash: string): PrepareOutcome | null {
+    try {
+      const packet = this.db().recordExistingPacketRun(
+        {
+          id: this.newId(),
+          requestId: req.requestId,
+          requestHash: hash,
+          kind: "prepare",
+          createdAt: this.iso(),
+          sourceTodoId: req.todoId,
+        },
+        req.todoId,
+      );
+      return packet ? { kind: "packet", packet } : null;
+    } catch (err) {
+      // The same request id was recorded concurrently: answer exactly as a replay would.
+      if (isConstraint(err)) {
+        const replay = this.replayPrepare(req.requestId, hash);
+        if (replay) return replay;
+      }
+      throw err;
+    }
+  }
+
+  private async executePreparation(
+    run: AssistantRun,
+    lock: LockHandle,
+    item: BriefingItem,
+    composer: Composer,
+    active: ActiveRun,
+    verified: (refusal: Error | null) => void,
+  ): Promise<void> {
+    const store = this.db();
+    const controller = new AbortController();
+    active.abort = () => controller.abort();
+    // The budget uses the injected clock, like every other time read in this service.
+    const startedAt = this.now();
+    let expired = false;
+    let answered = false;
+    /** Answered only after the lock is released, so an immediate retry is not busy. */
+    let refusal: Error | null = null;
+    const answer = (outcome: Error | null): void => {
+      if (answered) return;
+      answered = true;
+      verified(outcome);
+    };
+    const timer = setTimeout(() => {
+      expired = true;
+      this.finish(store, run.id, "failed", "run_timeout");
+      controller.abort();
+    }, this.deadlineMs);
+    try {
+      // Fresh reads (never the TodosCache); both settle before the lock can be released.
+      const [todosRead, quarantineRead] = await Promise.allSettled([
+        this.opts.sheets.readRows(TODOS),
+        this.opts.sheets.readRows(QUARANTINE),
+      ]);
+      if (expired || this.closing) return;
+      if (todosRead.status === "rejected" || quarantineRead.status === "rejected") {
+        const failure: unknown =
+          todosRead.status === "rejected"
+            ? todosRead.reason
+            : (quarantineRead as PromiseRejectedResult).reason;
+        this.finish(
+          store,
+          run.id,
+          "failed",
+          failure instanceof SheetsError && failure.kind === "not_configured"
+            ? "sheets_not_configured"
+            : "source_unavailable",
+        );
+        refusal = new SourceUnavailableError();
+        return;
+      }
+      if (!sourceStillCurrent(item, todosRead.value, quarantineRead.value)) {
+        this.finish(store, run.id, "failed", "source_changed");
+        refusal = new SourceConflictError();
+        return;
+      }
+      answer(null); // verified: the POST answers 202 while composition continues
+      const remaining = this.deadlineMs - (this.now() - startedAt);
+      // Never start composition after the deadline or shutdown. (Those paths are already terminal:
+      // the deadline timer / close() recorded the run's end.)
+      if (expired || this.closing || controller.signal.aborted) return;
+      if (remaining <= 0) {
+        // The deadline passed but its timer has not fired yet (event-loop delay): end the run here.
+        expired = true;
+        this.finish(store, run.id, "failed", "run_timeout");
+        controller.abort();
+        return;
+      }
+      let outcome: ComposeOutcome;
+      try {
+        outcome = await composer.compose(
+          { sourceRef: item.sourceRef },
+          { timeoutMs: Math.min(this.composeCapMs, remaining), signal: controller.signal },
+        );
+      } catch {
+        outcome = {
+          ok: false,
+          code: "compose_failed",
+          model: null,
+          promptVersion: COMPOSE_PROMPT_VERSION,
+        };
+      }
+      // A late result (past the deadline, after close) is discarded; commitPacket re-checks too.
+      if (expired || this.closing) return;
+      if (!outcome.ok) {
+        const meta: RunMeta = { model: outcome.model, promptVersion: outcome.promptVersion };
+        this.finish(store, run.id, "failed", outcome.code, meta);
+        return;
+      }
+      const createdAt = this.iso();
+      store.commitPacket(run.id, {
+        id: this.newId(),
+        todoId: item.sourceRef.todoId,
+        sourceRef: item.sourceRef,
+        createdAt,
+        updatedAt: createdAt,
+        revision: 1,
+        state: "open",
+        draft: outcome.composition.draft,
+        checklist: outcome.composition.checklist.map((text) => ({
+          id: this.newId(),
+          text,
+          done: false,
+        })),
+        questions: outcome.composition.questions,
+        model: outcome.model,
+        promptVersion: outcome.promptVersion,
+      });
+    } catch (err) {
+      this.warn(
+        `[yarvis] assistant preparation run failed: ${err instanceof Error ? err.name : "error"}`,
+      );
+      this.finish(store, run.id, "failed", "internal");
+    } finally {
+      clearTimeout(timer);
+      active.abort = undefined;
+      this.ensureEnded(store, run.id);
+      await this.release(lock);
+      answer(refusal);
+    }
+  }
+
+  /**
+   * Guarded terminal write (applies only while the run is still `running`); returns whether it
+   * changed the row. A closed or contended store is reported, never thrown.
+   */
   private finish(
     store: AssistantStore,
     runId: string,
     state: "failed" | "interrupted",
     code: RunErrorCode,
-  ): void {
+    meta?: RunMeta,
+  ): boolean {
     try {
-      if (store.isOpen) store.finishRun(runId, state, code, this.iso());
+      return store.isOpen && store.finishRun(runId, state, code, this.iso(), meta);
     } catch (err) {
       this.warn(
         `[yarvis] could not record assistant run end: ${err instanceof Error ? err.name : "error"}`,
       );
+      return false;
+    }
+  }
+
+  /**
+   * Safety net run once all owned I/O has settled and before the lock is released: every exit
+   * path after admission leaves the run terminal. A no-op when it already ended (the normal case).
+   */
+  private ensureEnded(store: AssistantStore, runId: string): void {
+    if (this.finish(store, runId, "failed", "internal")) {
+      this.warn("[yarvis] assistant run ended without a terminal state; recorded failed");
     }
   }
 
@@ -444,7 +788,8 @@ export class AssistantService {
 
   /**
    * Stops admissions, marks an owned in-flight run interrupted/shutdown (a late result can no
-   * longer publish), waits for its I/O and lock release, then closes the database. Idempotent.
+   * longer publish), aborts owned composition, waits for its I/O and lock release, then closes
+   * the database. Idempotent.
    */
   close(): Promise<void> {
     this.closed ??= (async () => {
@@ -452,6 +797,7 @@ export class AssistantService {
       const active = this.active;
       if (active?.runId && this.store)
         this.finish(this.store, active.runId, "interrupted", "shutdown");
+      active?.abort?.();
       await this.idle();
       this.store?.close();
       this.store = null;

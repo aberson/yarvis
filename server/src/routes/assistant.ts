@@ -5,25 +5,40 @@
 //   GET  /api/assistant/briefings/latest              -> 200 {briefing: Briefing | null}
 //   GET  /api/assistant/runs/latest                   -> 200 {run: AssistantRun | null}
 //   GET  /api/assistant/runs/:id      (UUID)          -> 200 {run}; 400 bad_id; 404 not_found
+//   POST /api/assistant/preparations  {requestId, briefingId, todoId}
+//                                     -> 202 {run} (source verified, composing), 200 {packet} for
+//                                        a Todo that already has one (no model call)
+//   GET  /api/assistant/preparations/:id (UUID)       -> 200 {packet}; 400 bad_id; 404 not_found
 // 409 assistant_busy (another run / store contended), 409 revision_conflict (request id reused
-// with different input), 503 assistant_unavailable (store corrupt/newer/closing).
+// with different input; or the selected task changed / is unknown / not open / not extracted /
+// quarantined: refresh and build a new briefing), 503 source_unavailable (the task could not be
+// verified against the sheet), 503 assistant_unavailable (store corrupt/newer/closing).
 import { type ErrorRequestHandler, type Response, Router } from "express";
 import { z } from "zod";
 import {
   isUuid,
+  TODO_ID_MAX_CHARS,
   type LatestBriefingResponse,
   type LatestRunResponse,
+  type PacketResponse,
   type RunResponse,
 } from "@yarvis/shared";
 import {
   AssistantBusyError,
   AssistantUnavailableError,
   RequestConflictError,
+  SourceConflictError,
+  SourceUnavailableError,
   type AssistantService,
 } from "../assistant/service.js";
 import { sendError } from "../http.js";
 
 const StartBriefingSchema = z.strictObject({ requestId: z.string().refine(isUuid) });
+const StartPreparationSchema = z.strictObject({
+  requestId: z.string().refine(isUuid),
+  briefingId: z.string().refine(isUuid),
+  todoId: z.string().min(1).max(TODO_ID_MAX_CHARS),
+});
 
 function noStore(res: Response): Response {
   return res.set("Cache-Control", "no-store");
@@ -38,6 +53,14 @@ const assistantErrors: ErrorRequestHandler = (err: unknown, _req, res, next) => 
     sendError(res, "assistant_busy", "another assistant run is in progress; try again shortly");
   } else if (err instanceof RequestConflictError) {
     sendError(res, "revision_conflict", "request id already used with different input");
+  } else if (err instanceof SourceConflictError) {
+    sendError(
+      res,
+      "revision_conflict",
+      "the task changed or is not ready to prepare; refresh, then build a new briefing",
+    );
+  } else if (err instanceof SourceUnavailableError) {
+    sendError(res, "source_unavailable", "could not check the task against the sheet; try again");
   } else if (err instanceof AssistantUnavailableError) {
     sendError(res, "assistant_unavailable", "assistant storage is unavailable; Todos still work");
   } else {
@@ -83,6 +106,41 @@ export function assistantRouter(opts: { service: AssistantService }): Router {
       return;
     }
     const body: RunResponse = { run };
+    noStore(res).json(body);
+  });
+
+  router.post("/api/assistant/preparations", async (req, res) => {
+    const parsed = StartPreparationSchema.safeParse(req.body as unknown);
+    if (!parsed.success) {
+      sendError(res, "bad_request", "body must be {requestId: UUID, briefingId: UUID, todoId}");
+      return;
+    }
+    // Deliberately NOT aborted when the HTTP client disconnects (S1.5): the run is durable and owned
+    // by the service, bounded by its 90 s deadline, and aborted only by service close (shutdown).
+    // A browser that lost this response rediscovers the run via GET /api/assistant/runs/latest and
+    // correlates it by requestId.
+    const outcome = await service.startPreparation(parsed.data);
+    if (outcome.kind === "packet") {
+      const body: PacketResponse = { packet: outcome.packet };
+      noStore(res).status(200).json(body);
+      return;
+    }
+    const body: RunResponse = { run: outcome.run };
+    noStore(res).status(202).json(body);
+  });
+
+  router.get("/api/assistant/preparations/:id", (req, res) => {
+    const id = req.params.id;
+    if (!isUuid(id)) {
+      sendError(res, "bad_id", "not a preparation id (UUID)");
+      return;
+    }
+    const packet = service.getPacket(id);
+    if (!packet) {
+      sendError(res, "not_found", "no preparation with that id");
+      return;
+    }
+    const body: PacketResponse = { packet };
     noStore(res).json(body);
   });
 

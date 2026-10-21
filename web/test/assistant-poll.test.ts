@@ -2,9 +2,9 @@
 // lost POST's run only when its request id matches, reports busy with the latest run, and otherwise
 // asks for an explicit Retry (same id) instead of re-POSTing. Plus the age/template helpers.
 import { describe, expect, it, vi } from "vitest";
-import type { AssistantRun } from "@yarvis/shared";
+import type { AssistantRun, PreparationPacket } from "@yarvis/shared";
 import { ApiError } from "../src/api.js";
-import { pollAssistantRun, startOrRecover } from "../src/assistant-poll.js";
+import { pollAssistantRun, prepareOrRecover, startOrRecover } from "../src/assistant-poll.js";
 import { en } from "../src/i18n/strings.js";
 import { fill, formatAge } from "../src/ui/format.js";
 
@@ -61,6 +61,61 @@ describe("pollAssistantRun", () => {
     });
     await vi.waitFor(() => expect(finished).toHaveBeenCalled());
     expect(onError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("pollAssistantRun stop from onError", () => {
+  it("a permanent error that stops polling inside onError schedules no further request", async () => {
+    const fetchRun = vi.fn(() => Promise.reject(new ApiError(404, "not_found", "gone")));
+    let stop: () => void = () => undefined;
+    const onError = vi.fn(() => stop());
+    stop = pollAssistantRun({
+      runId: "x",
+      fetchRun,
+      onRun: () => undefined,
+      onFinished: () => undefined,
+      onError,
+      intervalMs: 5,
+    });
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 40));
+    expect(fetchRun).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("prepareOrRecover", () => {
+  const packet = { id: "p1" } as unknown as PreparationPacket;
+
+  it("an existing packet (200) opens directly; a 202 run is followed", async () => {
+    expect(
+      await prepareOrRecover(REQ, {
+        start: () => Promise.resolve({ packet }),
+        latestRun: vi.fn(),
+      }),
+    ).toEqual({ kind: "packet", packet });
+    const r = run({ kind: "prepare" });
+    expect(
+      await prepareOrRecover(REQ, { start: () => Promise.resolve({ run: r }), latestRun: vi.fn() }),
+    ).toEqual({ kind: "started", run: r });
+  });
+
+  it("a lost response adopts only our own request id; refusals are definitive errors", async () => {
+    const lost = () => Promise.reject(new TypeError("Failed to fetch"));
+    const mine = run({ kind: "prepare" });
+    expect(
+      await prepareOrRecover(REQ, { start: lost, latestRun: () => Promise.resolve(mine) }),
+    ).toEqual({ kind: "started", run: mine });
+    expect(
+      await prepareOrRecover(REQ, { start: lost, latestRun: () => Promise.resolve(null) }),
+    ).toEqual({ kind: "lost" });
+    const conflict = new ApiError(409, "revision_conflict", "changed");
+    expect(
+      await prepareOrRecover(REQ, { start: () => Promise.reject(conflict), latestRun: vi.fn() }),
+    ).toEqual({ kind: "error", error: conflict });
+    const source = new ApiError(503, "source_unavailable", "x");
+    expect(
+      await prepareOrRecover(REQ, { start: () => Promise.reject(source), latestRun: vi.fn() }),
+    ).toEqual({ kind: "error", error: source });
   });
 });
 

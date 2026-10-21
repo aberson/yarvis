@@ -529,3 +529,40 @@ code {
     flex-basis: 100%;
   }
 }
+
+/* ---- Preparation (S1 Step 10) ---- */
+.briefing-prep {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-top: 6px;
+  font-size: 13px;
+}
+.briefing-prep p {
+  margin: 0;
+}
+.preparation-source {
+  display: block;
+}
+.preparation-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.preparation-draft {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.preparation-checklist {
+  list-style: none;
+  padding: 0;
+}
+.preparation-checklist li {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+.preparation-questions li {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}

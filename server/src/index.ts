@@ -25,6 +25,8 @@ import { AssistantService, type SourceConfigured } from "./assistant/service.js"
 import { assistantRouter } from "./routes/assistant.js";
 import { loadSettings } from "./config/settings.js";
 import { seamsConfigured } from "./pipeline/configured.js";
+import { ClaudeComposer, type Composer } from "./ai/compose.js";
+import { FakeComposer } from "./fakes/composer.js";
 
 export interface AppDeps {
   paths: Paths;
@@ -157,16 +159,29 @@ export function sourceConfigured(
   };
 }
 
+/**
+ * The preparation composer: fake mode (YARVIS_FAKE=1) wires the deterministic synthetic
+ * FakeComposer like the other five fakes; real mode the CLI-backed ClaudeComposer, which reuses the
+ * existing isolated runClaude with the CURRENT settings.extract.model (re-read per call).
+ */
+export function defaultComposer(deps: Pick<AppDeps, "paths" | "fake">): Composer {
+  return deps.fake
+    ? new FakeComposer()
+    : new ClaudeComposer({ settings: () => loadSettings(deps.paths) });
+}
+
 /** The default assistant service for an app: same private dir and Sheets store. */
 export function defaultAssistantService(
   deps: Pick<AppDeps, "paths" | "fake" | "env" | "now">,
   sheets: SheetsStore,
+  composer: Composer = defaultComposer(deps),
 ): AssistantService {
   return new AssistantService({
     paths: deps.paths,
     sheets,
     configured: sourceConfigured(deps),
     now: deps.now,
+    composer,
   });
 }
 

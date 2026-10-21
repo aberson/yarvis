@@ -1,6 +1,6 @@
 // Assistant store (plan Phase 2 / S1, S1.5 "Storage", D43): Node's built-in `node:sqlite` at
 // `<privateDir>/assistant.sqlite` (its journal sidecar sits beside it). SQLite owns ONLY new
-// assistant state (runs, briefing snapshots, and the packets table Step 10 fills); the Google Sheet
+// assistant state (runs, briefing snapshots and preparation packets); the Google Sheet
 // stays authoritative for Todos. No native npm package, no external database.
 //
 //   - Initializer: a fresh/empty file is created at schema `PRAGMA user_version = 1` inside ONE
@@ -22,6 +22,8 @@ import {
   ASSISTANT_SCHEMA_VERSION,
   type AssistantRun,
   type Briefing,
+  type PacketState,
+  type PreparationPacket,
   type RunErrorCode,
   type RunKind,
   type RunState,
@@ -34,8 +36,9 @@ export const BUSY_TIMEOUT_MS = 250;
 
 /**
  * Bounded retention (fewer message excerpts at rest): each successful briefing keeps only the
- * newest BRIEFING_RETENTION snapshots, and finished briefing runs beyond the newest RUN_RETENTION
- * rows that no kept snapshot references are dropped. Running rows and packets are never pruned.
+ * newest BRIEFING_RETENTION snapshots; on every run insert/commit, finished runs (briefing or
+ * prepare) beyond the newest RUN_RETENTION rows that no kept snapshot or packet references are
+ * dropped. Running rows and packets are never pruned.
  */
 export const BRIEFING_RETENTION = 50;
 export const RUN_RETENTION = 200;
@@ -160,6 +163,47 @@ function isCorrupt(err: unknown): boolean {
   return typeof code === "number" && ((code & 0xff) === 11 || (code & 0xff) === 26);
 }
 
+/** SQLITE_CONSTRAINT (19), including its extended codes (e.g. a UNIQUE request_id race). */
+export function isConstraint(err: unknown): boolean {
+  const code = (err as { errcode?: unknown } | null)?.errcode;
+  return typeof code === "number" && (code & 0xff) === 19;
+}
+
+interface PacketRow {
+  id: string;
+  todo_id: string;
+  revision: number;
+  state: PacketState;
+  created_at: string;
+  updated_at: string;
+  body: string;
+}
+
+/** The stored body is the validated packet JSON; the columns own revision/state/timestamps. */
+function toPacket(row: PacketRow): PreparationPacket {
+  let body: PreparationPacket;
+  try {
+    body = JSON.parse(row.body) as PreparationPacket;
+  } catch {
+    throw new AssistantUnavailableError("corrupt");
+  }
+  return {
+    ...body,
+    id: row.id,
+    todoId: row.todo_id,
+    revision: Number(row.revision),
+    state: row.state,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+/** Model/prompt provenance recorded on a prepare run. */
+export interface RunMeta {
+  model: string | null;
+  promptVersion: string | null;
+}
+
 export interface NewRun {
   id: string;
   requestId: string;
@@ -281,6 +325,7 @@ export class AssistantStore {
         run.createdAt,
         run.sourceTodoId ?? null,
       );
+      pruneRuns(db);
       return toRun(db.prepare("SELECT * FROM runs WHERE id = ?").get(run.id) as unknown as RunRow);
     });
   }
@@ -294,13 +339,21 @@ export class AssistantStore {
     state: Exclude<RunState, "running" | "succeeded">,
     errorCode: RunErrorCode,
     finishedAt: string,
+    meta?: RunMeta,
   ): boolean {
     return this.tx((db) => {
-      const res = db
-        .prepare(
-          `UPDATE runs SET state = ?, error_code = ?, finished_at = ? WHERE id = ? AND state = 'running'`,
-        )
-        .run(state, errorCode, finishedAt, id);
+      const res = meta
+        ? db
+            .prepare(
+              `UPDATE runs SET state = ?, error_code = ?, finished_at = ?, model = ?, prompt_version = ?
+               WHERE id = ? AND state = 'running'`,
+            )
+            .run(state, errorCode, finishedAt, meta.model, meta.promptVersion, id)
+        : db
+            .prepare(
+              `UPDATE runs SET state = ?, error_code = ?, finished_at = ? WHERE id = ? AND state = 'running'`,
+            )
+            .run(state, errorCode, finishedAt, id);
       return Number(res.changes) === 1;
     });
   }
@@ -354,12 +407,96 @@ export class AssistantStore {
         `DELETE FROM briefings WHERE rowid NOT IN
            (SELECT rowid FROM briefings ORDER BY rowid DESC LIMIT ?)`,
       ).run(BRIEFING_RETENTION);
-      db.prepare(
-        `DELETE FROM runs WHERE kind = 'briefing' AND state != 'running'
-           AND id NOT IN (SELECT run_id FROM briefings)
-           AND rowid NOT IN (SELECT rowid FROM runs ORDER BY rowid DESC LIMIT ?)`,
-      ).run(RUN_RETENTION);
+      pruneRuns(db);
       return briefing;
+    });
+  }
+
+  /** A stored briefing snapshot by id (null: unknown or pruned). */
+  getBriefing(id: string): Briefing | null {
+    return this.use((db) => {
+      const row = db
+        .prepare("SELECT snapshot, schema_version FROM briefings WHERE id = ?")
+        .get(id) as { snapshot: string; schema_version: number } | undefined;
+      return row ? parseSnapshot(row) : null;
+    });
+  }
+
+  getPacket(id: string): PreparationPacket | null {
+    return this.use((db) => {
+      const row = db.prepare("SELECT * FROM packets WHERE id = ?").get(id) as PacketRow | undefined;
+      return row ? toPacket(row) : null;
+    });
+  }
+
+  packetForTodo(todoId: string): PreparationPacket | null {
+    return this.use((db) => {
+      const row = db.prepare("SELECT * FROM packets WHERE todo_id = ?").get(todoId) as
+        PacketRow | undefined;
+      return row ? toPacket(row) : null;
+    });
+  }
+
+  /**
+   * Existing-packet fast path (S1.5): when `todoId` already has a packet, atomically records a
+   * SUCCEEDED prepare run (unique request id + normalized-request hash, target = that packet) and
+   * returns the packet; no model work. Returns null (writing nothing) when there is no packet.
+   * A concurrent insert of the same request id surfaces as a constraint error to the caller.
+   */
+  recordExistingPacketRun(run: NewRun, todoId: string): PreparationPacket | null {
+    return this.tx((db) => {
+      const row = db.prepare("SELECT * FROM packets WHERE todo_id = ?").get(todoId) as
+        PacketRow | undefined;
+      if (!row) return null;
+      db.prepare(
+        `INSERT INTO runs (id, request_id, request_hash, kind, state, created_at, finished_at,
+                           target_id, source_todo_id)
+         VALUES (?, ?, ?, ?, 'succeeded', ?, ?, ?, ?)`,
+      ).run(
+        run.id,
+        run.requestId,
+        run.requestHash,
+        run.kind,
+        run.createdAt,
+        run.createdAt,
+        row.id,
+        todoId,
+      );
+      pruneRuns(db);
+      return toPacket(row);
+    });
+  }
+
+  /**
+   * Atomically stores a validated packet for a run that is STILL running and marks the run
+   * succeeded (target = the packet, with model/prompt provenance). Returns null (writing nothing)
+   * when the run already ended, so a late result after a deadline or shutdown is discarded.
+   */
+  commitPacket(runId: string, packet: PreparationPacket): PreparationPacket | null {
+    return this.tx((db) => {
+      const row = db.prepare("SELECT state FROM runs WHERE id = ?").get(runId) as
+        { state: RunState } | undefined;
+      if (row?.state !== "running") return null;
+      db.prepare(
+        `INSERT INTO packets (id, todo_id, run_id, revision, state, created_at, updated_at, body)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        packet.id,
+        packet.todoId,
+        runId,
+        packet.revision,
+        packet.state,
+        packet.createdAt,
+        packet.updatedAt,
+        JSON.stringify(packet),
+      );
+      db.prepare(
+        `UPDATE runs SET state = 'succeeded', target_id = ?, finished_at = ?, error_code = NULL,
+                         model = ?, prompt_version = ?
+         WHERE id = ? AND state = 'running'`,
+      ).run(packet.id, packet.createdAt, packet.model, packet.promptVersion, runId);
+      pruneRuns(db);
+      return packet;
     });
   }
 
@@ -375,11 +512,27 @@ export class AssistantStore {
   }
 }
 
+/**
+ * Drops finished runs beyond the newest RUN_RETENTION rows unless a kept snapshot or packet points
+ * at them (packets.run_id is a foreign key). Call inside a write transaction.
+ */
+function pruneRuns(db: DatabaseSync): void {
+  db.prepare(
+    `DELETE FROM runs WHERE state != 'running'
+       AND id NOT IN (SELECT run_id FROM briefings)
+       AND id NOT IN (SELECT run_id FROM packets WHERE run_id IS NOT NULL)
+       AND rowid NOT IN (SELECT rowid FROM runs ORDER BY rowid DESC LIMIT ?)`,
+  ).run(RUN_RETENTION);
+}
+
 function latestBriefingIn(db: DatabaseSync): Briefing | null {
   const row = db
     .prepare("SELECT snapshot, schema_version FROM briefings ORDER BY rowid DESC LIMIT 1")
     .get() as { snapshot: string; schema_version: number } | undefined;
-  if (!row) return null;
+  return row ? parseSnapshot(row) : null;
+}
+
+function parseSnapshot(row: { snapshot: string; schema_version: number }): Briefing {
   if (row.schema_version !== ASSISTANT_SCHEMA_VERSION) {
     throw new AssistantUnavailableError("unknown_schema");
   }

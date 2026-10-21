@@ -10,6 +10,8 @@ import {
   type HealthResponse,
   type LatestBriefingResponse,
   type LatestRunResponse,
+  type PacketResponse,
+  type PreparationPacket,
   type QuarantineItem,
   type RefreshStarted,
   type RefreshStatus,
@@ -17,6 +19,8 @@ import {
   type Settings,
   type SettingsPatch,
   type SettingsResponse,
+  type StartPreparationRequest,
+  type StartPreparationResponse,
   type StatusResponse,
   type Todo,
   type TodoFilter,
@@ -111,4 +115,12 @@ export const api = {
     (await request<LatestRunResponse>("GET", "/api/assistant/runs/latest")).run,
   getRun: async (id: string): Promise<AssistantRun> =>
     (await request<RunResponse>("GET", `/api/assistant/runs/${pathId(id)}`)).run,
+  /**
+   * POST /api/assistant/preparations: 202 {run} to follow, or 200 {packet} when the Todo already
+   * has one. `requestId` is generated once per intentional action (reused on an HTTP retry).
+   */
+  startPreparation: (body: StartPreparationRequest) =>
+    request<StartPreparationResponse>("POST", "/api/assistant/preparations", body),
+  getPacket: async (id: string): Promise<PreparationPacket> =>
+    (await request<PacketResponse>("GET", `/api/assistant/preparations/${pathId(id)}`)).packet,
 };

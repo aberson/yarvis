@@ -865,7 +865,7 @@ Only Steps 9–12 are the selected automated S1 queue; M7–M8 are attended acce
 - **Depends on:** completed Step 8
 
 ### Step 10: Prepare one source-grounded response packet
-- **Status:** BLOCKED (2026-10-21)
+- **Status:** DONE (2026-10-21)
 - **Problem:** A selected eligible briefing item produces a saved draft and checklist through the existing isolated CLI runner.
 - **Type:** code
 - **Issue:** #23

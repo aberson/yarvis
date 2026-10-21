@@ -6,7 +6,12 @@
 //     (and reuses on an HTTP retry). A lost response is answered by latest-run discovery: a run
 //     carrying the same request id is adopted; otherwise the caller offers an explicit Retry with
 //     the same id (never a silent re-POST).
-import { ASSISTANT_POLL_MS, type AssistantRun } from "@yarvis/shared";
+import {
+  ASSISTANT_POLL_MS,
+  type AssistantRun,
+  type PreparationPacket,
+  type StartPreparationResponse,
+} from "@yarvis/shared";
 import { ApiError, isLostResponse } from "./api.js";
 
 export interface RunPollOptions {
@@ -37,6 +42,8 @@ export function pollAssistantRun(opts: RunPollOptions): () => void {
     } catch (err) {
       if (stopped) return;
       opts.onError(err);
+      // onError may have stopped polling (a permanent error): schedule nothing more.
+      if (stopped) return;
     }
     timer = setTimeout(() => void tick(), intervalMs);
   };
@@ -66,14 +73,47 @@ export async function startOrRecover(requestId: string, deps: StartDeps): Promis
   try {
     return { kind: "started", run: await deps.start(requestId) };
   } catch (err) {
-    if (err instanceof ApiError && err.apiCode === "assistant_busy") {
-      const run = await deps.latestRun().catch(() => null);
-      return { kind: "busy", run };
-    }
-    if (isLostResponse(err)) {
-      const run = await deps.latestRun().catch(() => null);
-      return run && run.requestId === requestId ? { kind: "started", run } : { kind: "lost" };
-    }
-    return { kind: "error", error: err as ApiError };
+    return recoverStart(err, requestId, deps.latestRun);
+  }
+}
+
+/** Busy -> latest run; lost -> adopt the latest run only when it carries OUR request id. */
+async function recoverStart(
+  err: unknown,
+  requestId: string,
+  latestRun: () => Promise<AssistantRun | null>,
+): Promise<StartOutcome> {
+  if (err instanceof ApiError && err.apiCode === "assistant_busy") {
+    const run = await latestRun().catch(() => null);
+    return { kind: "busy", run };
+  }
+  if (isLostResponse(err)) {
+    const run = await latestRun().catch(() => null);
+    return run && run.requestId === requestId ? { kind: "started", run } : { kind: "lost" };
+  }
+  return { kind: "error", error: err as ApiError };
+}
+
+export type PrepareOutcome =
+  /** The Todo already has a packet (200): open it; no model call was made. */
+  { kind: "packet"; packet: PreparationPacket } | StartOutcome;
+
+export interface PrepareDeps {
+  start: (requestId: string) => Promise<StartPreparationResponse>;
+  latestRun: () => Promise<AssistantRun | null>;
+}
+
+/** startOrRecover for POST /api/assistant/preparations, which may answer with a packet. */
+export async function prepareOrRecover(
+  requestId: string,
+  deps: PrepareDeps,
+): Promise<PrepareOutcome> {
+  try {
+    const body = await deps.start(requestId);
+    return "packet" in body
+      ? { kind: "packet", packet: body.packet }
+      : { kind: "started", run: body.run };
+  } catch (err) {
+    return recoverStart(err, requestId, deps.latestRun);
   }
 }
