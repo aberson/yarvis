@@ -1,8 +1,8 @@
 # Yarvis — master plan
 
-Current direction (2026-10-20): S1 personal briefing and preparation, S2 delegated project work through Yarvis → Ambition/Calibration → Forge, S3 optional experiment bench backlog. The implemented v0 baseline below remains historical/current behavior until the new steps ship. Selected implementation scope: Steps 9–12 plus live checks M7–M8 in **Phase 2 / S1**; S2 is an integration agreement, not an executable build queue. No S1 implementation has started.
+Current direction (2026-10-20): S1 personal briefing and preparation, S2 delegated project work through Yarvis → Ambition/Calibration → Forge, S3 optional experiment bench backlog. Selected implementation scope: Steps 9–12 plus live checks M7–M8 in **Phase 2 / S1**; S2 is an integration agreement, not an executable build queue. Steps 9–12 shipped 2026-10-21 in fake mode (see S1.10); live acceptance M7–M8 pending.
 
-Status: Phase 1 automated build COMPLETE (Steps 1-8 DONE 2026-10-19, issues #2-#8 and #15 closed); Phase 1.1 live bring-up + polish COMPLETE (M1-M4 DONE 2026-10-20, #9-#12); M5-M6 pending. Written 2026-10-19 by `/plan-init`.
+Status: Phase 1 automated build COMPLETE (Steps 1-8 DONE 2026-10-19, issues #2-#8 and #15 closed); Phase 1.1 live bring-up + polish COMPLETE (M1-M4 DONE 2026-10-20, #9-#12); M5-M6 pending; Phase 2 / S1 Steps 9-12 DONE 2026-10-21 (#22-#25, fake mode), M7-M8 (#26-#27) PENDING. Written 2026-10-19 by `/plan-init`.
 
 ## 1. What This Is
 
@@ -664,7 +664,7 @@ multi-phase progress page is not required.
   | `gh repo view` | `"visibility":"PUBLIC"` |
   | `gh run list` | latest CI run `completed` / `success` (includes the smoke job and the leak check) |
 
-After all Automated Steps complete, the orchestrator prints: **Please run M1 next.**
+Phase 1 (done): M1 next. Phase 2 / S1: after Step 12, run M7 then M8 per `docs/acceptance/s1.md`.
 
 ---
 
@@ -748,7 +748,7 @@ After all Automated Steps complete, the orchestrator prints: **Please run M1 nex
 
 ## Phase 2 / S1 — Brief me, then help me handle one request
 
-**Status:** PLANNED. Operator selected the journey, drafts/checklists first, and Yarvis as the future phone front door. Technical defaults D42–D48 remain visible in the proposal. This section is the canonical S1 implementation plan; the S2 agreement carries future requirements only. Step numbers continue after completed Steps 1–8; M5/M6 and issue #18 remain open baseline work, not silently completed or renamed.
+**Status:** BUILT in fake mode (Steps 9–12 DONE 2026-10-21); live acceptance M7–M8 PENDING. Operator selected the journey, drafts/checklists first, and Yarvis as the future phone front door. Technical defaults D42–D48 remain visible in the proposal. This section is the canonical S1 implementation plan; the S2 agreement carries future requirements only. Step numbers continue after completed Steps 1–8; M5/M6 and issue #18 remain open baseline work, not silently completed or renamed.
 
 ### S1.1 What this feature does
 
@@ -791,7 +791,7 @@ No changes to `Paths`, `Settings`, `SettingsPatch`, `Todo`, `TodoPatch`, `Refres
 
 ### S1.5 New components and contracts
 
-**Storage.** `server/src/assistant/store.ts` owns SQLite through Node's built-in `node:sqlite`, at `path.join(paths.privateDir, 'assistant.sqlite')`. All auxiliary files stay beside it. This is a transaction store for assistant work, not a replacement for the Sheet: Sheets owns Todo identity/content/status, SQLite owns snapshots/runs/packets. The old private files are neither migrated nor deleted. Fake mode uses its resolved fake/temp private directory and must never reset assistant data during restart tests. Add a `PRAGMA user_version=1` transactional initializer, foreign keys, a bounded 250-millisecond busy timeout (return retryable assistant_busy on contention), and short transactions with no model/network work inside them. Fail closed on corrupt/newer-version stores; preserve files, surface `assistant_unavailable`, keep existing Todos usable, never silently recreate the database. Document stopped-server backup/restore of the database and any sidecars. No external database service or native npm package.
+**Storage.** `server/src/assistant/store.ts` owns SQLite through Node's built-in `node:sqlite`, at `path.join(paths.privateDir, 'assistant.sqlite')`. All auxiliary files stay beside it. This is a transaction store for assistant work, not a replacement for the Sheet: Sheets owns Todo identity/content/status, SQLite owns snapshots/runs/packets. The old private files are neither migrated nor deleted. Fake mode uses its resolved fake/temp private directory and must never reset assistant data during restart tests. Add a `PRAGMA user_version=1` transactional initializer, foreign keys, a bounded 250-millisecond busy timeout (return retryable assistant_busy on contention), and short transactions with no model/network work inside them. Fail closed on corrupt/newer-version stores; preserve files, surface `assistant_unavailable`, keep existing Todos usable, never silently recreate the database. Retention: keep the newest 50 briefing snapshots and the newest 200 finished runs not referenced by a kept briefing or packet; running rows and packets are never pruned, so request-ID idempotency and `previousBriefingId` resolution hold only within that window. Document stopped-server backup/restore of the database and any sidecars. No external database service or native npm package.
 
 **Shared schema.** New `shared/src/assistant.ts` defines the wire types and enum constants; the server validates all inputs and model output with its existing Zod library. The schema version is integer 1. Timestamps are UTC ISO strings; nullable means explicitly null. UUIDs are `crypto.randomUUID()` values; request IDs are generated in the browser once per intentional action and reused on HTTP retry. IDs travel as encoded path segments and are validated server-side. Every response omits raw model output, stderr, credentials and local filesystem paths.
 
@@ -905,7 +905,7 @@ Only Steps 9–12 are the selected automated S1 queue; M7–M8 are attended acce
 - **Type:** operator
 - **Issue:** #26
 - **Produces:** Observed pass/failure and sanitized evidence reference, not source/config artifacts.
-- **Done when:** From the Desktop shortcut, explicitly Refresh if needed, generate a briefing, select one benign real eligible task, prepare a useful packet with the real authenticated CLI, save an edit and reopen it. Confirm no message was sent or marked read by the new path. Do not alter global credentials or deliberately break another session's auth. A no-data condition is reported, not counted as live success. M7 runs before M8; no S1 completion on fake-only evidence.
+- **Done when:** Follow `docs/acceptance/s1.md` §M7 (sanitized evidence in its checklist, kept local): from the Desktop shortcut, explicitly Refresh if needed, generate a briefing, select one benign real eligible task, prepare a useful packet with the real authenticated CLI, save an edit and reopen it. Confirm no message was sent or marked read by the new path. Do not alter global credentials or deliberately break another session's auth. A no-data condition is reported, not counted as live success. M7 runs before M8; no S1 completion on fake-only evidence.
 - **Depends on:** 12
 
 ### Step M8: Accept the restart and handling journey
@@ -941,6 +941,40 @@ Per code step run separate commands: `npm run typecheck`, `npm run lint`, `npm r
 Meaningful tests: fixed response shapes; SQLite old/no/newer/corrupt schemas; true save conflicts; concurrent lock admission; request idempotency; late results; isolation of fake data; quarantine revalidation; invalid model output; restart through the server entry point; empty versus unavailable source; privacy logs; narrow viewport. Human semantic usefulness and real CLI/Sheets coupling are M7–M8. There is no scheduled/unattended behavior in this scope, so a multi-hour autonomous soak is not applicable; any future scheduler must add one.
 
 Development order: plan-review → plan-redline (operator/default choices) → plan-wrap (fresh-context readiness) → repo-sync (populate issue numbers for this phase only) → build-phase (isolated implementation and independent required reviews) → attended M7–M8 → repo-update. No implementation starts from blank issue fields. This planning session does not silently authorize external issue messages, a production launch, or unrelated producer builds.
+
+### S1.10 Build record (2026-10-21)
+
+**Steps 9–12 (#22–#25) closed. 586/586 Vitest, 32/32 Playwright, `npm run smoke` and `npm run smoke:assistant` passing. Zero type errors. Zero lint violations.** Fake mode only: M7 (#26) and M8 (#27) remain PENDING until observed by the operator.
+
+#### What was built
+
+- Step 9: `/briefing` landing route; saved, on-demand briefing snapshots in `private/assistant.sqlite` (`node:sqlite`, `user_version=1`, fail-closed on corrupt/newer); assistant run admission, `private/assistant.lock`, 90 s deadline, interrupted recovery after the lock, close lifecycle; retention caps (50 briefings, 200 runs).
+- Step 10: `ai/compose.ts` over unchanged `runClaude` (envelope parsed with extract.ts's exported `findEnvelope`), source revalidation before any model call, request identity incl. existing-packet fast path, model timeout = min(`settings.extract.timeoutMs`, 60 s, remaining); fake composer; Preparation page.
+- Step 11: compare-and-swap PATCH with `currentPacket` on 409, explicit local handled state (never writes Sheets), saved list `/preparations` (cap 100), unsaved-change protection (`createBrowserRouter` + `useBlocker`), restart persistence, 390 px flow.
+- Step 12: `npm run smoke:assistant` (real app/router/service/SQLite, restart, privacy check; fails closed) in CI; README/CLAUDE.md; operator script `docs/acceptance/s1.md`.
+
+#### Files changed
+
+| File | Change |
+|---|---|
+| `shared/src/assistant.ts`, `shared/src/types.ts`, `shared/src/index.ts` | Assistant wire types; `assistant_busy`, `revision_conflict`, `assistant_unavailable`, `source_unavailable` |
+| `server/src/assistant/{store,service}.ts` | SQLite store and run/lock/deadline/recovery service |
+| `server/src/routes/assistant.ts`, `server/src/index.ts`, `server/src/main.ts`, `server/src/http.ts` | Assistant routes, optional injection, lifecycle, `sendError` extra body |
+| `server/src/ai/compose.ts`, `server/src/fakes/composer.ts`, `server/src/ai/extract.ts` | Composer seam, fake composer, `findEnvelope` export (behavior unchanged) |
+| `web/src/pages/{Briefing,Preparation,Preparations}.tsx`, `web/src/assistant-poll.ts`, `web/src/App.tsx`, `web/src/main.tsx`, `web/src/api.ts`, `web/src/i18n/strings.ts`, `web/src/styles.css`, `web/src/ui/format.ts` | Briefing landing, preparation editing, saved list, polling, en+pirate strings |
+| `server/scripts/assistant-smoke.ts`, `.github/workflows/ci.yml`, `package.json` | `smoke:assistant` gate in CI; Node `>=24.14.0 <25` |
+| `web/playwright.config.ts`, `web/e2e/assistant.spec.ts` | Seeded second fake server (8798/5184, fake-only `YARVIS_FAKE_SHEET_SEED`) and assistant e2e |
+| `docs/acceptance/s1.md`, `README.md`, `CLAUDE.md` | Operator M7/M8 script and current-state docs |
+
+#### Fresh context notes for S1
+
+| Issue | Detail |
+|---|---|
+| Live dev server | Landing each step hot-reloaded into the operator's running `npm run dev`; runtime review always ran from step worktrees on 8797/5183. |
+| Lost-save re-base | Preparation re-bases once only when the 409 `currentPacket` equals this tab's own sent save at `base + 1`; a genuine second-tab save always shows the conflict panel (negative e2e test). |
+| Client disconnect | A dropped POST does not abort generation (browser reconnects via `/api/assistant/runs/latest`); service close does abort. |
+| Step 10 block | BLOCKED at 3/3 on a style Nit (`prep-*` → `preparation-*`); operator-approved rename, resumed review PASS. |
+| Known lows | Saved list labels by chat/subject `context` (spec-fixed summary fields); smoke `sqliteCheck` leaves handles open on a failing Windows run. |
 
 ## S2 — Selected direction, integration deferred
 

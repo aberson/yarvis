@@ -12,10 +12,11 @@ folder and a Controls page (connections, settings and the logo picker).
 the gitignored `private/` folder) is the only write target. Quarantined messages never reach the
 generating model.
 
-> **Phase 1.1 complete** — issues #9–#12 closed. Running live on real Gmail, WhatsApp, Jev and Google
-> Sheets, with the Y.A.R.V.I.S. HUD theme, 10 selectable logos, the merged Controls page and a Desktop
-> shortcut. 453 tests passing, 0 type errors, 0 lint violations. Remaining operator steps M5–M6 are in
-> [docs/plans/master_plan.md](docs/plans/master_plan.md).
+> **Phase 2 / S1 automated build complete** — issues #22–#25 closed. Saved Briefing landing page, one
+> source-grounded reply preparation per task, revision-checked editing with a local handled state, and
+> restart persistence, verified in fake mode. 586 tests passing (plus 32 Playwright specs and both smokes),
+> 0 type errors, 0 lint violations. Live acceptance M7–M8 (#26, #27) and Phase 1 operator steps M5–M6
+> remain open in [docs/plans/master_plan.md](docs/plans/master_plan.md).
 
 ## Personal briefing and preparation (S1: built; live acceptance pending)
 
@@ -45,7 +46,7 @@ The optional experiment bench stays in the backlog.
 | Classification | `@typesafe-ai/sdk` (Jev, `jev-latest`) | Cheap typed yes/no decisions; never generates text |
 | Extraction | `claude -p --tools ""` single-shot (subscription OAuth, neutral temp cwd, pinned model) | Forced single-shot; no API key in the repo |
 | Assistant store | Built-in `node:sqlite` (`private/assistant.sqlite`) | Transactional runs, briefing snapshots and preparation packets; no native package, no external DB |
-| Tests / lint | Vitest, Playwright (fake mode), ESLint + Prettier, `tsc --noEmit` | Fakes let every gate run without credentials |
+| Tests / lint | Vitest, Playwright (fake mode), ESLint + Prettier, `tsc --noEmit`, `npm run smoke`, `npm run smoke:assistant` | Fakes let every gate run without credentials |
 
 ## Prerequisites
 
@@ -102,7 +103,7 @@ npm run dev                    # the day-to-day run mode (watch)
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-shortcut.ps1
 ```
 
-Creates a **Yarvis** shortcut on the Desktop. Double-clicking it opens the app in the browser; if
+Creates a **Yarvis** shortcut on the Desktop. Double-clicking it opens the app in the browser on the Briefing page; if
 Yarvis is not running it first starts `npm run dev` in a minimized "Yarvis" window (close that
 window to stop it).
 
@@ -271,12 +272,12 @@ yarvis/
 ├── settings.example.json   # tracked template copied by `npm run setup`
 ├── .github/workflows/ci.yml
 ├── shared/src/             # types, pinned sheet headers, id helpers
-├── server/src/             # Express app, connectors/{gmail,whatsapp,sheets}, ai/{jev,extract,decide},
-│                           # pipeline/refresh, assistant/{store,service}, routes, cli, doctor, fakes
+├── server/src/             # Express app, connectors/{gmail,whatsapp,sheets}, ai/{jev,extract,decide,compose},
+│                           # pipeline/refresh, assistant/{store,service}, routes, cli, doctor, fakes (incl. composer)
 ├── server/scripts/         # smoke.ts (`npm run smoke`), assistant-smoke.ts (`npm run smoke:assistant`)
 ├── scripts/                # Desktop launcher: launch.ps1, install-shortcut.ps1, yarvis.ico
 ├── web/src/                # React pages: Briefing (landing), Preparation(s), Todos, Quarantine, Controls
-├── private/                # GITIGNORED except private/README.md: settings, tokens, caches
+├── private/                # GITIGNORED except private/README.md: settings, tokens, caches, assistant.sqlite
 ├── docs/acceptance/s1.md   # S1 live acceptance script (M7, M8)
 └── docs/plans/master_plan.md
 ```
