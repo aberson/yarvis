@@ -17,10 +17,11 @@ generating model.
 > shortcut. 453 tests passing, 0 type errors, 0 lint violations. Remaining operator steps M5–M6 are in
 > [docs/plans/master_plan.md](docs/plans/master_plan.md).
 
-## Next: personal briefing and preparation
+## Personal briefing and preparation (S1, in progress)
 
-S1 is planned and reviewed, not yet built: “brief me, then help me handle one request” with
-editable response drafts and checklists; sending remains manual. See the
+S1 is planned and reviewed: “brief me, then help me handle one request” with editable response
+drafts and checklists; sending remains manual. Step 9 (the saved **Briefing** landing page, below)
+is built; preparation packets (Steps 10–12) are not yet. See the
 [proposal](docs/plans/s1-assistant-proposal.html), [review](docs/plans/s1-plan-review.md), and
 [master plan](docs/plans/master_plan.md) (Steps 9–12, followed by live acceptance M7–M8).
 S2 project delegation is deferred until Ambition/Calibration and Forge finish their current work;
@@ -32,18 +33,20 @@ The optional experiment bench stays in the backlog.
 
 | Layer | Tool | Why |
 |---|---|---|
-| Runtime | Node 24, npm workspaces (`shared/`, `server/`, `web/`), TypeScript strict | One runtime end to end; Baileys is Node-only |
+| Runtime | Node 24 (>= 24.14.0, < 25), npm workspaces (`shared/`, `server/`, `web/`), TypeScript strict | One runtime end to end; Baileys is Node-only |
 | Backend | Express 5 on `127.0.0.1:8787` | Smallest well-known HTTP layer; localhost-only is the auth model |
 | Frontend | Vite + React 18 + react-router on `127.0.0.1:5173` (`--strictPort`) | Pinned port, no surprises on Windows |
 | WhatsApp | `@whiskeysockets/baileys` 7.x (read side only) | Linked-device client, no browser; on-demand session per refresh |
 | Gmail / Sheets | `googleapis` | Gmail `gmail.readonly` user OAuth; Sheets via service account |
 | Classification | `@typesafe-ai/sdk` (Jev, `jev-latest`) | Cheap typed yes/no decisions; never generates text |
 | Extraction | `claude -p --tools ""` single-shot (subscription OAuth, neutral temp cwd, pinned model) | Forced single-shot; no API key in the repo |
+| Assistant store | Built-in `node:sqlite` (`private/assistant.sqlite`) | Transactional runs and briefing snapshots; no native package, no external DB |
 | Tests / lint | Vitest, Playwright (fake mode), ESLint + Prettier, `tsc --noEmit` | Fakes let every gate run without credentials |
 
 ## Prerequisites
 
-- Node 24 + npm 11, git
+- Node 24.14.0 or later within major 24 (`engines: >=24.14.0 <25`; the built-in `node:sqlite`
+  module the assistant uses prints an ExperimentalWarning, which is expected) + npm 11, git
 - The Claude Code CLI (`claude`) on PATH and logged in with your subscription (its own credential
   store; nothing goes in `private/`)
 - For real connectors (not needed in fake mode): a Google Cloud project with the Gmail and Sheets
@@ -62,7 +65,8 @@ npm run setup            # creates private/ skeleton + settings.json from settin
 npm run dev:fake         # server 127.0.0.1:8787 + web 127.0.0.1:5173 with fake connectors
 ```
 
-Open http://127.0.0.1:5173 and press **Refresh**: every external seam (WhatsApp, Gmail, Jev,
+Open http://127.0.0.1:5173: it lands on the **Briefing** page (`/` redirects to `/briefing`). On
+the Todos page press **Refresh**: every external seam (WhatsApp, Gmail, Jev,
 Claude, Sheets) is a seeded fake. `npm run setup` is idempotent and never overwrites an existing
 file: it creates `private/cache/`, `private/settings.json` (copied from `settings.example.json`)
 and `private/.env` with an empty `TYPESAFE_API_KEY=` line. Fake mode keeps its data in
@@ -98,6 +102,20 @@ Creates a **Yarvis** shortcut on the Desktop. Double-clicking it opens the app i
 Yarvis is not running it first starts `npm run dev` in a minimized "Yarvis" window (close that
 window to stop it).
 
+## Briefing
+
+The landing page (`/briefing`, also what the Desktop shortcut opens) shows a saved snapshot of your
+open, screened to-dos. **Build briefing** reads the Todos and Quarantine tabs of the sheet now — it
+does not fetch mail or WhatsApp; use **Refresh** on the Todos page for that — and stores the result
+in `private/assistant.sqlite`. Each snapshot shows its age, the full open count, up to 25 newest
+items (the rest are counted with a link to Todos), per-source coverage (freshness is always
+"unknown": the sheet's read time is not a connector sync time) and marks items "New to this
+briefing" compared with the previous snapshot (the first one is a baseline). Pending extractions are
+listed but not ready to prepare. If a sheet read fails, the run is shown as failed and the previous
+snapshot stays, labelled historical. Only the newest 50 snapshots (and 200 finished briefing runs) are
+kept, so message excerpts do not pile up in the database. One assistant run at a time (`private/assistant.lock`); a run
+in flight when the server stopped shows as interrupted after restart and is never re-run on its own.
+
 ## Recovery
 
 | Symptom | Fix |
@@ -105,6 +123,8 @@ window to stop it).
 | WhatsApp `loggedOut` (`relink required` on the Controls page) | `npm run yarvis -- wa:link --reset` |
 | Gmail token expired (Testing-mode consent lasts about 7 days) | `npm run yarvis -- gmail:auth` |
 | Suspect local cache | delete `private/cache` (the Google Sheet is the system of record and survives; the next refresh re-reads and re-screens) |
+| Briefing says assistant storage is unavailable (corrupt or newer `assistant.sqlite`) | Todos keep working. Stop the server, move `private/assistant.sqlite` (and any `assistant.sqlite-journal`) aside or restore a backup, start again; Yarvis never repairs or recreates it on its own |
+| Back up / restore briefings | with the server stopped, copy `private/assistant.sqlite` plus any `assistant.sqlite-journal` beside it; restore the same way |
 | Stuck refresh job | it ends `error` at the 15 min ceiling, or restart the server (a dead process's `private/refresh.lock` is reclaimed) |
 
 ## Tests and gates
@@ -170,10 +190,10 @@ yarvis/
 ├── .github/workflows/ci.yml
 ├── shared/src/             # types, pinned sheet headers, id helpers
 ├── server/src/             # Express app, connectors/{gmail,whatsapp,sheets}, ai/{jev,extract,decide},
-│                           # pipeline/refresh, routes, cli, doctor, fakes
+│                           # pipeline/refresh, assistant/{store,service}, routes, cli, doctor, fakes
 ├── server/scripts/smoke.ts # `npm run smoke`
 ├── scripts/                # Desktop launcher: launch.ps1, install-shortcut.ps1, yarvis.ico
-├── web/src/                # React pages: Todos, Quarantine, Controls (logo picker + connections)
+├── web/src/                # React pages: Briefing (landing), Todos, Quarantine, Controls
 ├── private/                # GITIGNORED except private/README.md: settings, tokens, caches
 └── docs/plans/master_plan.md
 ```

@@ -69,4 +69,18 @@ describe("README.md", () => {
     expect(referenced).toContain("smoke");
     expect(referenced.filter((name) => !(name in rootScripts()))).toEqual([]);
   });
+
+  it("states the Node runtime requirement pinned in the root package.json engines (S1, D43)", () => {
+    const pkg = JSON.parse(readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as {
+      engines?: { node?: string };
+    };
+    expect(pkg.engines?.node).toBe(">=24.14.0 <25");
+    expect(readme).toContain(pkg.engines?.node ?? "<missing>");
+    expect(readme).toContain("Node 24.14.0");
+  });
+
+  it("documents the Briefing landing route and its stopped-server backup", () => {
+    expect(readme).toContain("`/` redirects to `/briefing`");
+    expect(readme).toContain("private/assistant.sqlite");
+  });
 });

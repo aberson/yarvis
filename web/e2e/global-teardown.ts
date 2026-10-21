@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 export default function globalTeardown(): void {
-  const dir = process.env.YARVIS_E2E_PRIVATE_DIR;
+  removeTempDir(process.env.YARVIS_E2E_PRIVATE_DIR);
+  removeTempDir(process.env.YARVIS_E2E_SEEDED_DIR);
+}
+
+function removeTempDir(dir: string | undefined): void {
   // Only ever remove the temp dir this run created.
   if (!dir || !path.basename(dir).startsWith("yarvis-e2e-")) return;
   if (path.dirname(path.resolve(dir)) !== path.resolve(tmpdir())) return;

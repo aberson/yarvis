@@ -23,3 +23,26 @@ export function formatReason(reason: string): string {
     .filter((part) => part !== "")
     .join(", ");
 }
+
+/** Fills `{name}` placeholders of a string-table template. */
+export function fill(template: string, vars: Readonly<Record<string, string | number>>): string {
+  return template.replace(/\{(\w+)\}/g, (whole, name: string) =>
+    name in vars ? String(vars[name]) : whole,
+  );
+}
+
+/** Relative age of an ISO timestamp at `nowMs`, with the string table's templates. */
+export function formatAge(
+  iso: string,
+  nowMs: number,
+  t: { ageJustNow: string; ageMinutes: string; ageHours: string; ageDays: string },
+): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return iso;
+  const minutes = Math.floor(Math.max(0, nowMs - then) / 60_000);
+  if (minutes < 1) return t.ageJustNow;
+  if (minutes < 60) return fill(t.ageMinutes, { n: minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return fill(t.ageHours, { n: hours });
+  return fill(t.ageDays, { n: Math.floor(hours / 24) });
+}

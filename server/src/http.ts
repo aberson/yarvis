@@ -12,6 +12,10 @@ const STATUS: Record<ApiErrorCode, number> = {
   sheets_not_configured: 503,
   sheets_error: 502,
   internal: 500,
+  assistant_busy: 409,
+  revision_conflict: 409,
+  assistant_unavailable: 503,
+  source_unavailable: 503,
 };
 
 export function sendError(res: Response, error: ApiErrorCode, message?: string): void {

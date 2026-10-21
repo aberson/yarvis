@@ -4,6 +4,7 @@
 //     actually arrived on (req.socket.localPort) or the configured web port (Vite proxy, D31);
 //   - 403 missing_x_yarvis on any mutating method without header `X-Yarvis: 1`.
 // No CORS middleware: the web app reaches the API through the Vite /api proxy (D31).
+import path from "node:path";
 import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 import { X_YARVIS_VALUE } from "@yarvis/shared";
 import type { Env, Paths } from "./config/paths.js";
@@ -17,9 +18,13 @@ import { quarantineRouter } from "./routes/quarantine.js";
 import { refreshRouter } from "./routes/refresh.js";
 import { statusRouter } from "./routes/status.js";
 import { SheetsError, type SheetsStore } from "./connectors/sheets.js";
-import { createFakeSheets } from "./fakes/sheets.js";
+import { createFakeSheets, loadSheetSeed } from "./fakes/sheets.js";
 import { RefreshRunner } from "./pipeline/job.js";
 import { defaultSeams, realSheetsStore, type PipelineSeams } from "./pipeline/seams.js";
+import { AssistantService, type SourceConfigured } from "./assistant/service.js";
+import { assistantRouter } from "./routes/assistant.js";
+import { loadSettings } from "./config/settings.js";
+import { seamsConfigured } from "./pipeline/configured.js";
 
 export interface AppDeps {
   paths: Paths;
@@ -49,6 +54,12 @@ export interface AppDeps {
   refreshRunner?: RefreshRunner;
   /** Environment GET /api/status reads (TYPESAFE_API_KEY, PATH); default process.env. */
   env?: Env;
+  /**
+   * The assistant service behind /api/assistant/* (plan S1). main.ts injects one and owns its
+   * init/close lifecycle; otherwise a default one over this app's Sheets store is built whose
+   * SQLite store opens lazily on the first assistant request (existing callers never touch it).
+   */
+  assistant?: AssistantService;
 }
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -112,8 +123,51 @@ const errorHandler: ErrorRequestHandler = (err: unknown, _req, res, next) => {
   sendError(res, "internal", "internal server error");
 };
 
-export function defaultSheetsStore(deps: Pick<AppDeps, "paths" | "fake">): SheetsStore {
-  return deps.fake ? createFakeSheets().store : realSheetsStore(deps.paths);
+/**
+ * Fake mode only: YARVIS_FAKE_SHEET_SEED names an alternate synthetic seed file (absolute path,
+ * `{Todos, Quarantine}`) for the in-memory sheet. Used by the Playwright seeded server to exercise
+ * data-dependent UI (25-item cap, extraction states); ignored outside fake mode.
+ */
+export const FAKE_SHEET_SEED_ENV = "YARVIS_FAKE_SHEET_SEED";
+
+export function defaultSheetsStore(
+  deps: Pick<AppDeps, "paths" | "fake">,
+  env: Env = process.env,
+): SheetsStore {
+  if (!deps.fake) return realSheetsStore(deps.paths);
+  const seedFile = env[FAKE_SHEET_SEED_ENV]?.trim();
+  return createFakeSheets(
+    seedFile && path.isAbsolute(seedFile) ? { seed: loadSheetSeed(seedFile) } : {},
+  ).store;
+}
+
+/** Source coverage flags from files present only (pipeline/configured.ts); never secret values. */
+export function sourceConfigured(
+  deps: Pick<AppDeps, "paths" | "fake" | "env">,
+): () => Promise<SourceConfigured> {
+  return async () => {
+    const settings = await loadSettings(deps.paths).catch(() => null);
+    const flags = seamsConfigured({
+      paths: deps.paths,
+      env: deps.env ?? process.env,
+      fake: deps.fake,
+      settings,
+    });
+    return { gmail: flags.gmail, whatsapp: flags.whatsapp };
+  };
+}
+
+/** The default assistant service for an app: same private dir and Sheets store. */
+export function defaultAssistantService(
+  deps: Pick<AppDeps, "paths" | "fake" | "env" | "now">,
+  sheets: SheetsStore,
+): AssistantService {
+  return new AssistantService({
+    paths: deps.paths,
+    sheets,
+    configured: sourceConfigured(deps),
+    now: deps.now,
+  });
 }
 
 export function createApp(deps: AppDeps): express.Express {
@@ -141,6 +195,9 @@ export function createApp(deps: AppDeps): express.Express {
   );
   app.use(quarantineRouter({ store: sheets }));
   app.use(refreshRouter({ runner: refresh }));
+  const assistant = deps.assistant ?? defaultAssistantService(deps, sheets);
+  app.locals.assistant = assistant; // so a caller that did not inject one can close it
+  app.use(assistantRouter({ service: assistant }));
   app.use(
     statusRouter({
       paths: deps.paths,

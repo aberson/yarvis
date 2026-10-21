@@ -1,13 +1,19 @@
 // Typed fetch wrappers (plan §5). Relative /api paths through the Vite proxy (D31); every mutating
 // call sends X-Yarvis: 1 (D22); path ids are wrapped in encodeURIComponent (pathId).
 import {
+  API_ERROR_CODES,
   X_YARVIS_HEADER,
   X_YARVIS_VALUE,
   type ApiErrorBody,
+  type ApiErrorCode,
+  type AssistantRun,
   type HealthResponse,
+  type LatestBriefingResponse,
+  type LatestRunResponse,
   type QuarantineItem,
   type RefreshStarted,
   type RefreshStatus,
+  type RunResponse,
   type Settings,
   type SettingsPatch,
   type SettingsResponse,
@@ -26,6 +32,22 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+
+  /** The server's typed error code, or null for a non-API failure (e.g. the proxy's 502). */
+  get apiCode(): ApiErrorCode | null {
+    return (API_ERROR_CODES as readonly string[]).includes(this.code)
+      ? (this.code as ApiErrorCode)
+      : null;
+  }
+}
+
+/**
+ * True when a request may have reached the server without us seeing its answer (network error,
+ * proxy failure, non-API 5xx): the caller must rediscover state instead of assuming nothing ran.
+ */
+export function isLostResponse(err: unknown): boolean {
+  if (err instanceof ApiError) return err.apiCode === null && err.status >= 500;
+  return true;
 }
 
 /** Encodes one path segment (ids contain `:`, `@` and `#`). */
@@ -80,4 +102,13 @@ export const api = {
   },
   getRefreshStatus: () => request<RefreshStatus>("GET", "/api/refresh/status"),
   getStatus: () => request<StatusResponse>("GET", "/api/status"),
+  /** POST /api/assistant/briefings: `requestId` is generated once per intentional action. */
+  startBriefing: async (requestId: string): Promise<AssistantRun> =>
+    (await request<RunResponse>("POST", "/api/assistant/briefings", { requestId })).run,
+  getLatestBriefing: async () =>
+    (await request<LatestBriefingResponse>("GET", "/api/assistant/briefings/latest")).briefing,
+  getLatestRun: async () =>
+    (await request<LatestRunResponse>("GET", "/api/assistant/runs/latest")).run,
+  getRun: async (id: string): Promise<AssistantRun> =>
+    (await request<RunResponse>("GET", `/api/assistant/runs/${pathId(id)}`)).run,
 };

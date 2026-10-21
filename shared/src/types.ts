@@ -142,6 +142,10 @@ export interface HealthResponse {
  * body shape: `settings_invalid` (500, private settings.json fails validation),
  * `sheets_not_configured` (503, no sheetId / service-account.json), `sheets_error` (502, the
  * Sheets API failed after retries, timed out, or a tab header does not match) and `internal` (500).
+ * Assistant (S1): `assistant_busy` (409, another assistant run holds the lock or the store is
+ * contended; retryable), `revision_conflict` (409, a request id reused with different input),
+ * `assistant_unavailable` (503, the assistant store is corrupt/newer/unopenable or the server is
+ * closing; Todos stay usable) and `source_unavailable` (503, a source could not be verified).
  */
 export const API_ERROR_CODES = [
   "bad_host",
@@ -153,6 +157,10 @@ export const API_ERROR_CODES = [
   "sheets_not_configured",
   "sheets_error",
   "internal",
+  "assistant_busy",
+  "revision_conflict",
+  "assistant_unavailable",
+  "source_unavailable",
 ] as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];

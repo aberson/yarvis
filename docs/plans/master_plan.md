@@ -852,7 +852,7 @@ D48: S1 remains loopback-only. Responsive layout is tested at phone width but do
 Only Steps 9–12 are the selected automated S1 queue; M7–M8 are attended acceptance. S2/S3 headings are not dispatchable steps. Keep earlier completed work and M5/M6 separate when syncing. Every code step uses the existing full project gates as separate commands; declared tests below add behavioral evidence rather than replacing those gates. All runtime reviewers use isolated fake data and ports; never use the operator's running main checkout.
 
 ### Step 9: Persist a briefing of current screened tasks
-- **Status:** PENDING
+- **Status:** DONE (2026-10-21)
 - **Problem:** Deliver an on-demand saved briefing at the actual app landing page, with honest freshness, counts and failure behavior.
 - **Type:** code
 - **Issue:** #22

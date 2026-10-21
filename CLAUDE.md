@@ -13,7 +13,8 @@ Plan: [docs/plans/master_plan.md](docs/plans/master_plan.md).
 
 | Layer | Tool |
 |---|---|
-| Runtime | Node 24, npm workspaces (`shared/`, `server/`, `web/`), TypeScript strict |
+| Runtime | Node 24 (engines `>=24.14.0 <25`), npm workspaces (`shared/`, `server/`, `web/`), TypeScript strict |
+| Assistant store | built-in `node:sqlite` at `private/assistant.sqlite` (schema `user_version` 1; ExperimentalWarning expected) |
 | Backend | Express 5 on `127.0.0.1:8787` (`tsx` dev, `tsc` build) |
 | Frontend | Vite + React 18 + react-router on `127.0.0.1:5173` (`--strictPort`) |
 | WhatsApp | `@whiskeysockets/baileys` 7.0.0-rc14 (exact pin; read side only) + `qrcode-terminal` |
@@ -49,20 +50,23 @@ Gate: run `npm run typecheck`, `npm run lint`, `npm run build`, `npm test`, `npm
 
 ```
 shared/src/        types.ts (Message, Todo, scores, RefreshStatus, status), sheet.ts (pinned headers), ids.ts,
-                   since.ts (the one settings.since parser), logos.ts (LOGO_IDS)
+                   since.ts (the one settings.since parser), logos.ts (LOGO_IDS), assistant.ts (S1 wire types)
 server/src/        index.ts (app factory), main.ts, http.ts (guard, sendError), access-log.ts, setup.ts,
                    cli.ts (verb dispatcher) + wa-cli.ts + refresh-cli.ts, doctor.ts, lock.ts (refresh.lock),
                    config/ (paths, env, settings), connectors/{gmail,whatsapp,sheets}.ts,
                    ai/{jev,extract,decide}.ts, pipeline/{refresh,job,cache,state,seams,errors,configured,activity}.ts,
-                   routes/{health,settings,todos,quarantine,refresh,status}.ts, util/, fakes/ (5 seams)
+                   assistant/{store,service}.ts (S1 SQLite store + one-run service),
+                   routes/{health,settings,todos,quarantine,refresh,status,assistant}.ts, util/, fakes/ (5 seams)
 server/scripts/    smoke.ts (npm run smoke)
 server/fixtures/   synthetic seeds + manifest.ts (EXPECTED fake-mode totals)      server/test/   vitest
 web/src/           App.tsx, api.ts, refresh-poll.ts, i18n/strings.ts (en + pirate), ui/{format,logos},
-                   pages/{Todos,Quarantine,Controls,Connections}.tsx, styles.css (HUD theme tokens)
+                   assistant-poll.ts, pages/{Briefing,Todos,Quarantine,Controls,Connections}.tsx,
+                   styles.css (HUD theme tokens)
 scripts/           launch.ps1 + install-shortcut.ps1 + yarvis.ico (Desktop shortcut; ASCII-only .ps1)
 web/e2e/           playwright smoke (own fake server on 8797/5183)
 private/           GITIGNORED (only private/README.md tracked): settings.json, .env, OAuth client,
-                   gmail-token.json, service-account.json, wa-auth/, state.json, cache/; fake/ in fake mode
+                   gmail-token.json, service-account.json, wa-auth/, state.json, cache/, assistant.sqlite,
+                   assistant.lock; fake/ in fake mode
 .github/workflows/ ci.yml (setup, gates, smoke, private-data leak check)
 docs/plans/        master_plan.md
 ```
@@ -91,9 +95,21 @@ system of record, upserted by `id`.
 **Status**: `GET /api/status` reports configured flags (files/env only, no live probes) plus the last
 refresh's per-seam success/error; `yarvis doctor` live-probes each configured seam (D24).
 
-**Web**: three routes (Todos, Quarantine, Controls = connections + settings + logo picker; `/apps`
-and `/settings` redirect, D40); pirate mode swaps a string table only. J.A.R.V.I.S. HUD theme tokens
-live in `web/src/styles.css`; the 10 logos in `web/src/ui/logos.tsx` (ids in `shared/src/logos.ts`).
+**Assistant (S1)**: `assistant/store.ts` owns `private/assistant.sqlite` (runs, briefings, packets
+tables; v1 transactional initializer, FKs, 250 ms busy timeout -> 409 `assistant_busy`; corrupt/newer
+store fails closed -> 503 `assistant_unavailable`, files untouched, Todos unaffected).
+`assistant/service.ts` admits one run at a time under `private/assistant.lock` (existing `acquireLock`,
+separate from refresh.lock), request-id idempotency before busy admission, 90 s logical deadline (a
+late sheet read is discarded while the lock is held until it settles), startup reconcile of abandoned
+`running` rows to interrupted only after taking the lock; `main.ts` runs `init()` before listening
+and `close()` waits for owned work then closes the DB. Briefing = fresh Todos + Quarantine reads,
+`visibleTodos`, open only, date desc + id tie-break, 25 cap with open/omitted counts. Routes:
+`POST /api/assistant/briefings`, `GET /api/assistant/briefings/latest`, `GET /api/assistant/runs/latest`,
+`GET /api/assistant/runs/:id`. No packet generation yet (Step 10).
+
+**Web**: four routes (Briefing = landing, `/` redirects there; Todos, Quarantine, Controls =
+connections + settings + logo picker; `/apps` and `/settings` redirect, D40); pirate mode swaps a
+string table only. J.A.R.V.I.S. HUD theme tokens live in `web/src/styles.css`; the 10 logos in `web/src/ui/logos.tsx` (ids in `shared/src/logos.ts`).
 `settings.since` takes a day or a UTC instant, parsed only by `shared/src/since.ts` (D38). Desktop
 launcher: `scripts/launch.ps1` (shortcut via `scripts/install-shortcut.ps1`; keep both ASCII-only).
 
@@ -101,11 +117,11 @@ launcher: `scripts/launch.ps1` (shortcut via `scripts/install-shortcut.ps1`; kee
 
 Phase 1.1 complete (2026-10-20) — running live on real Gmail, WhatsApp (4-chat allowlist), Jev and the Google Sheet; M1-M4 done; Y.A.R.V.I.S. HUD theme, 10 logos, Controls page, Desktop shortcut (453 vitest + 10 e2e, last implementation baseline). Open: M5 (#13) two-day observation, M6 (#14) publish check, #18 WhatsApp history backfill.
 
-Next: S1 personal briefing + editable response drafts/checklists, planned and independently reviewed but not built. Canonical scope is master plan Phase 2 / S1, Steps 9–12; M7–M8 are separate live acceptance. Run scoped repo-sync before build-phase; do not dispatch the historical master indiscriminately. S1 does not send messages or execute project work. S2 is deferred pending the Ambition/Calibration + Forge handback; ownership and proposed contracts live in `docs/plans/s2-integration-agreement.md`, with the other-window prompt in `docs/plans/s2-coordination-prompt.md`. S3 experiment bench is backlog only. See `docs/plans/s1-plan-review.md` and `docs/plans/s1-assistant-proposal.html` for readiness and decision provenance.
+S1 Step 9 (#22) built: saved Briefing landing page over the SQLite assistant store. Next: S1 Steps 10-12 (response drafts/checklists), planned and independently reviewed but not built. Canonical scope is master plan Phase 2 / S1, Steps 9–12; M7–M8 are separate live acceptance. Run scoped repo-sync before build-phase; do not dispatch the historical master indiscriminately. S1 does not send messages or execute project work. S2 is deferred pending the Ambition/Calibration + Forge handback; ownership and proposed contracts live in `docs/plans/s2-integration-agreement.md`, with the other-window prompt in `docs/plans/s2-coordination-prompt.md`. S3 experiment bench is backlog only. See `docs/plans/s1-plan-review.md` and `docs/plans/s1-assistant-proposal.html` for readiness and decision provenance.
 
 ## Environment requirements
 
-- Windows 11, Node >= 20 (24 installed), npm 11, `claude` CLI logged in via subscription OAuth.
+- Windows 11, Node >= 24.14.0 < 25 (built-in `node:sqlite`), npm 11, `claude` CLI logged in via subscription OAuth.
 - Google Cloud project with Gmail API + Sheets API enabled; Desktop OAuth client JSON; service-account key; a Google Sheet shared with the service account (M1).
 - `TYPESAFE_API_KEY` in `private/.env` (M2).
 - A phone with WhatsApp to scan the link QR (M3). Baileys is unofficial; read-only use accepted by the operator.

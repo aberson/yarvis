@@ -1,16 +1,19 @@
-// App shell: logo + wordmark, nav (Todos, Quarantine, Controls — D12, D40) + routes (plan §5).
-// The old /apps and /settings routes redirect to /controls so bookmarks keep working.
+// App shell: logo + wordmark, nav (Briefing, Todos, Quarantine, Controls — D12, D40, S1) + routes
+// (plan §5). `/` (the Desktop shortcut's landing URL) redirects to /briefing (S1 Step 9); the old
+// /apps and /settings routes redirect to /controls so bookmarks keep working.
 import { useCallback, useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes } from "react-router";
 import type { Settings, SettingsResponse } from "@yarvis/shared";
 import { api } from "./api.js";
 import { PirateContext, usePirate, type StringKey } from "./i18n/strings.js";
+import { BriefingPage } from "./pages/Briefing.js";
 import { ControlsPage } from "./pages/Controls.js";
 import { QuarantinePage } from "./pages/Quarantine.js";
 import { TodosPage } from "./pages/Todos.js";
 import { Logo } from "./ui/logos.js";
 
 const NAV: ReadonlyArray<{ to: string; label: StringKey; testId: string }> = [
+  { to: "/briefing", label: "navBriefing", testId: "nav-briefing" },
   { to: "/todos", label: "navTodos", testId: "nav-todos" },
   { to: "/quarantine", label: "navQuarantine", testId: "nav-quarantine" },
   { to: "/controls", label: "navControls", testId: "nav-controls" },
@@ -51,7 +54,8 @@ function Shell({
           </p>
         )}
         <Routes>
-          <Route path="/" element={<Navigate to="/todos" replace />} />
+          <Route path="/" element={<Navigate to="/briefing" replace />} />
+          <Route path="/briefing" element={<BriefingPage />} />
           <Route path="/todos" element={<TodosPage settings={settings} />} />
           <Route path="/quarantine" element={<QuarantinePage />} />
           <Route
