@@ -1,6 +1,6 @@
 # Yarvis — master plan (v0)
 
-Status: Phase 1 automated build COMPLETE (Steps 1-8 DONE 2026-10-19, issues #2-#8 and #15 closed); manual steps M1-M6 pending. Written 2026-10-19 by `/plan-init`.
+Status: Phase 1 automated build COMPLETE (Steps 1-8 DONE 2026-10-19, issues #2-#8 and #15 closed); Phase 1.1 live bring-up + polish COMPLETE (M1-M4 DONE 2026-10-20, #9-#12); M5-M6 pending. Written 2026-10-19 by `/plan-init`.
 
 ## 1. What This Is
 
@@ -12,8 +12,8 @@ chats) and **Gmail** (inbox since 2026-10-01), screens every Gmail message throu
 decision model for spam/phishing/malicious content (flagged mail is quarantined and never reaches
 extraction), asks Jev whether each clean message contains an action item, rewrites each hit into a
 one-line to-do with a `claude -p` call, and stores the results in a **Google Sheet** that a small
-**React** front end renders as a combined to-do list with source tags, a quarantine folder, a
-connected-apps page and a settings page. **Guardrails:** WhatsApp and Gmail are READ ONLY, pinned in
+**React** front end renders as a combined to-do list with source tags, a quarantine folder and a
+Controls page (connections + settings + logo picker, D40). **Guardrails:** WhatsApp and Gmail are READ ONLY, pinned in
 code and tests; Google Sheets (plus the gitignored `private/` folder) is the only write target.
 
 Out of scope for v0: scheduled/background refresh (manual Refresh button only), sending or labeling
@@ -119,7 +119,7 @@ a hard error naming file and line. `messages.jsonl` is first-wins per
 id; `decisions.jsonl` is last-record-wins per id (a retry appends a superseding record).
 
 `state.json` types: `lastRunAt` is an ISO 8601 UTC string; `lastMessageTs` is Unix epoch seconds
-(the unit of Baileys `messageTimestamp`). `settings.since` is read as `00:00:00Z` that day, so
+(the unit of Baileys `messageTimestamp`). `settings.since` (a day) is read as `00:00:00Z` that day, or as an exact UTC instant (D38, `sinceEpochMs`), so
 `2026-10-01` → Gmail `after:1790812800` and WhatsApp `sinceTs = 1790812800` (timezone-independent).
 
 ### 3.4 Google Sheet (system of record, two tabs, header row pinned in `shared/src/sheet.ts`)
@@ -301,7 +301,8 @@ yarvis/
 │   ├── state.json               # incremental cursors (not cache)
 │   ├── refresh.lock             # cross-process refresh lock (transient)
 │   └── cache/                   # messages.jsonl, decisions.jsonl
-├── shared/src/{types,sheet,ids}.ts
+├── shared/src/{types,sheet,ids,since,logos}.ts
+├── scripts/                     # launch.ps1, install-shortcut.ps1, yarvis.ico (Desktop shortcut, D41)
 ├── server/
 │   ├── src/ (see §5)   ├── fixtures/ (fake seeds)   └── test/ (vitest)
 └── web/
@@ -364,7 +365,7 @@ real smoke gate, and lets the operator click through the UI before any account i
 | Baileys 7.x is an RC | API drift mid-build | Pin exact version in `package.json`; Step 5 reads the installed `node_modules/@whiskeysockets/baileys/lib/Types/Events.d.ts` before coding |
 | Jev rate limits unknown for direct API | Refresh of a large inbox throttled | SDK `RateLimitError` + backoff; `jev.concurrency` 2 (settings); decisions cache means each message is scored once |
 | Jev false negatives on phishing | Malicious mail reaches Claude extraction | Claude runs with no tools and emits JSON only; prompt wraps content as data; threshold tunable |
-| Gmail OAuth consent in Testing mode | Refresh token expires ~7 days after consent | Expected (pta_finance precedent); `yarvis gmail:auth` re-mints; Connected apps shows `lastError` |
+| Gmail OAuth consent in Testing mode | Refresh token expires ~7 days after consent | Expected (pta_finance precedent); `yarvis gmail:auth` re-mints; the Controls page shows `lastError` |
 | `claude -p` seam inherits harness config | Timeouts / non-JSON | neutral cwd + `--tools ""` + `--strict-mcp-config` + `--disable-slash-commands` + pinned fast model + envelope-aware tolerant parser; no bare-mode flag (it disables OAuth) |
 | Public repo + private folder | Secret leak | `private/` gitignored except `private/README.md`; Step 1 test asserts tracked + would-be-tracked files under `private/` are exactly that file; CI and M6 run `git ls-files private` on the committed tree |
 | Promotions/Social volume | Many Jev calls on first run | First run bounded by since-date (2026-10-01); cost ≈ $0.042 per 1M input tokens |
@@ -391,6 +392,7 @@ Connect real services (each is a manual step below): `npm run yarvis -- gmail:au
 and `npm run dev` (the day-to-day run mode; `npm run build` / `npm start` exist for CI and a
 non-watch run). Tests: `npm test` (vitest), `npm run typecheck`, `npm run lint`,
 `npm run e2e` (playwright, fake mode), `npm run smoke` (fake-mode end-to-end refresh).
+Optional Desktop shortcut (D41): `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-shortcut.ps1`.
 Recovery commands: §8 "Recovery".
 
 ## 11. Development Process
@@ -516,6 +518,7 @@ multi-phase progress page is not required.
 - **Type:** operator
 - **Source step:** Step 4 (Gmail), Step 2 (Sheets), Step 7 (doctor)
 - **Issue:** #9
+- **Status:** DONE (2026-10-20, live accounts)
 - **Commands:**
   ```powershell
   # Prerequisite (once): creates private\settings.json and private\.env from the templates.
@@ -545,6 +548,7 @@ multi-phase progress page is not required.
 - **Type:** operator
 - **Source step:** Step 3, Step 7 (doctor)
 - **Issue:** #10
+- **Status:** DONE (2026-10-20, live accounts)
 - **Commands:**
   ```powershell
   # Get a key at https://console.typesafe.ai/ and put TYPESAFE_API_KEY=... in private\.env
@@ -563,6 +567,7 @@ multi-phase progress page is not required.
 - **Type:** operator
 - **Source step:** Step 5
 - **Issue:** #11
+- **Status:** DONE (2026-10-20, live accounts)
 - **Commands:**
   ```powershell
   Set-Location C:\Users\abero\dev\yarvis
@@ -587,6 +592,7 @@ multi-phase progress page is not required.
 - **Type:** operator
 - **Source step:** Step 6
 - **Issue:** #12
+- **Status:** DONE (2026-10-20, live accounts)
 - **Commands:**
   ```powershell
   Set-Location C:\Users\abero\dev\yarvis
@@ -623,7 +629,8 @@ multi-phase progress page is not required.
   | Pending extraction | set `extract.model` in `private\settings.json` to an invalid alias, refresh → new actionable rows land as pending; restore the model, refresh → actions filled (never `claude /logout`: it logs out every Claude Code session on the machine) |
   | Jev fail-closed | set an invalid `TYPESAFE_API_KEY` in `private\.env` and restart `npm run dev` (`.env` is read once at server start; or use `npm run yarvis -- refresh`, which reads it per run), refresh → job ends `error` at stage jev, sheet unchanged; restore the key, restart, refresh → the held messages are screened |
   | Pirate toggle | survives restart; data unchanged |
-  | Gmail token expiry | around day 7 after consent the gmail stage errors and Connected apps shows `lastError`; `npm run yarvis -- gmail:auth` recovers |
+  | Desktop shortcut | with Yarvis stopped, the shortcut starts `npm run dev` in a minimized window and opens the browser; with it running, it only opens the browser |
+  | Gmail token expiry | around day 7 after consent the gmail stage errors and the Controls page connection card shows `lastError`; `npm run yarvis -- gmail:auth` recovers |
   | Findings | append to `docs/observations/m5.md` (timings, misclassifications, errors) |
   | Triage | sort `m5.md` into follow-up issues labeled blocker / tuning / UX / docs |
 
@@ -697,12 +704,48 @@ After all Automated Steps complete, the orchestrator prints: **Please run M1 nex
 | CI leak scan | D37; the manual M6 grep in this plan still shows harmless field-name hits in code/fixtures — CI excludes those for the field-name scan only. |
 | Sheets append retry | `values.append` is retried on 500/503 per §3.4 and could duplicate a row if Google applied the first attempt; reads dedupe first-row-wins. |
 
+---
+
+## Phase 1.1 — Live bring-up and operator polish
+
+**M1–M4 done live (#9–#12). 453/453 vitest + 10/10 Playwright + `npm run smoke` passing. Zero type errors. Zero lint violations.** 2026-10-20; main at `e15ef73`, CI green.
+
+### What was built
+
+- M1–M4 against real accounts: Gmail read-only consent, Sheets service account (org policy `iam.disableServiceAccountKeyCreation` overridden for the yarvis project only), TypeSafe/Jev, WhatsApp linked with a 4-chat allowlist; first real refresh end to end
+- Gmail per-minute rate limits are waited out instead of failing the refresh: shared `QuotaGate` (429 / 403 `rateLimitExceeded`), pace + concurrency halved per hit, bounded waits, incremental `onMessages` caching (`67a4e2c`)
+- `settings.since` accepts an exact UTC instant (D38) — used for the operator's clean-slate reset
+- J.A.R.V.I.S.-inspired HUD theme with pirate red + black highlights (D41); 10 selectable header logos + `Y.A.R.V.I.S.` wordmark (D39); Connected apps + Settings merged into Controls (D40)
+- Desktop shortcut: `scripts/launch.ps1` (start `npm run dev` if not healthy, then open the browser), `scripts/install-shortcut.ps1`, `scripts/yarvis.ico`
+
+### Files changed
+
+| Area | Change |
+|---|---|
+| `shared/src/` | `since.ts` (the one `since` parser), `logos.ts` (`LOGO_IDS`, `DEFAULT_LOGO`), `types.ts` (`Settings.logo`, `SettingsPatch.logo`), `index.ts` |
+| `server/src/` | `config/settings.ts` (since + logo schema, `PATCH {logo}`), `routes/settings.ts`, `connectors/gmail.ts` (QuotaGate, instant since), `fakes/gmail.ts`, `util/retry.ts`, `pipeline/{refresh,errors}.ts` |
+| root | `settings.example.json` (`logo`), README, CLAUDE.md |
+| `web/src/` | `App.tsx` (3 nav items, redirects, logo + wordmark), `pages/Controls.tsx` + `pages/Connections.tsx` (replace `Settings.tsx` / `ConnectedApps.tsx`), `ui/logos.tsx`, `styles.css` (theme tokens), `i18n/strings.ts` |
+| `scripts/` | `launch.ps1`, `install-shortcut.ps1`, `yarvis.ico` (ASCII-only `.ps1`) |
+| tests | `shared/test/since.test.ts`; settings, gmail, retry, refresh, errors and strings tests; e2e logo picker + route redirects |
+
+### Fresh context notes for Phase 1.1
+
+| Issue | Detail |
+|---|---|
+| WhatsApp history is one-shot | WhatsApp sends a linked device its past messages only on the first connection after linking; under M3's order `wa:chats` consumes it, so `since` is never backfilled (#18). Re-link + clear the `whatsapp` cursor + refresh first to backfill. |
+| Live dev server | `npm run dev` runs `tsx watch` + Vite HMR on the working tree, so branch edits show up in the operator's open app immediately. |
+| Clean-slate reset | Done by a one-off script (not in repo): cache, decisions and Sheet rows pruned to one message; `since` set to the reset instant so the 24 h cursor overlap cannot re-fetch. |
+| Remaining operator steps | M5 (#13, two-day observation) and M6 (#14, publish check) stay open. |
+
+---
+
 ## 12. Appendix
 
 ### 12.1 `private/settings.json` (and tracked repo-root `settings.example.json`)
 
 `since` is the first-run floor for both Gmail (P10) and WhatsApp (D21): a day `YYYY-MM-DD` (00:00:00Z) or an exact UTC
-instant `YYYY-MM-DDTHH:MM[:SS]Z` (D38). `logo` is one of `LOGO_IDS` (absent = `reactor-skull`, D39). `sheetId` is the spreadsheet
+instant `YYYY-MM-DDTHH:MM[:SS[.sss]]Z` (D38). `logo` is one of `LOGO_IDS` (absent = `reactor-skull`, D39). `sheetId` is the spreadsheet
 id segment of the sheet URL `https://docs.google.com/spreadsheets/d/<sheetId>/edit`; used by
 `connectors/sheets.ts` and the Todos page "Open sheet" link.
 
@@ -784,7 +827,7 @@ Invocation: `claude -p --tools "" --model claude-haiku-5-5 --output-format json 
 | D9 | D | Baileys drain window 8 s quiet / 60 s max; presence off; full history off | proposed |
 | D10 | D | Express 5 on 127.0.0.1:8787; Vite 5173 strictPort host 127.0.0.1 | proposed |
 | D11 | D | Fake mode `YARVIS_FAKE=1` is a first-class run mode (reviewers, CI smoke, first click-through) | proposed |
-| D12 | D | Quarantine is its own route (four nav items) | proposed |
+| D12 | D | Quarantine is its own route (four nav items) | proposed (nav count superseded by D40) |
 | D13 | D | Refresh is an in-process job: 202 + 2 s polling, 409 while running | proposed |
 | D14 | D | Body caps: 4000 chars stored, 2000 chars to Jev; links extracted | proposed |
 | D15 | D | `--reviewers full` (fake mode) on Steps 1, 2, 6; `code` elsewhere; worktree isolation | superseded by D26 |
@@ -810,7 +853,7 @@ Invocation: `claude -p --tools "" --model claude-haiku-5-5 --output-format json 
 | D35 | D | Lock stale age 17 min (15 min ceiling + 2 min settle grace + 5 s margin); at the ceiling the job reports error immediately but keeps `refresh.lock` until the abandoned stage settles; supersedes D19's 15 min clause | proposed (build 2026-10-19) |
 | D36 | D | JSONL torn-line rule: only an unterminated final line is torn (skipped; next append truncates it); a corrupt newline-terminated line is an error; shared by loader and writer | proposed (build 2026-10-19) |
 | D37 | D | CI leak check: `private/` must track exactly `private/README.md` (any case); no tracked file that `.gitignore` excludes; TYPESAFE_API_KEY value scan (>=16 chars) and key-shape scan over all tracked files; field-name scan excludes code/fixtures/docs | proposed (build 2026-10-19) |
-| D38 | D | `settings.since` also accepts an exact UTC instant (`YYYY-MM-DDTHH:MM[:SS]Z`); one parser `sinceEpochMs` (shared/src/since.ts) used by settings validation, the Gmail cursor and the WhatsApp floor. Motivation: a clean-slate reset at M4 needed a floor of "now", and a day floor plus the 24 h cursor overlap would re-fetch the day's mail | proposed (operator polish 2026-10-20) |
+| D38 | D | `settings.since` also accepts an exact UTC instant (`YYYY-MM-DDTHH:MM[:SS[.sss]]Z`); one parser `sinceEpochMs` (shared/src/since.ts) used by settings validation, the Gmail cursor and the WhatsApp floor. Motivation: a clean-slate reset at M4 needed a floor of "now", and a day floor plus the 24 h cursor overlap would re-fetch the day's mail | proposed (operator polish 2026-10-20) |
 | D39 | D | Header logo: 10 HUD-ring + pirate-mark SVGs, `settings.logo` (one of `LOGO_IDS`, default `reactor-skull`), writable via `PATCH /api/settings {logo}`; wordmark `Y.A.R.V.I.S.` (J.A.R.V.I.S. was the inspiration only) | proposed (operator polish 2026-10-20) |
 | D40 | D | Connected apps + Settings merge into one Controls page (`/controls`, pirate "The Helm"); three nav items, old routes redirect; supersedes D12's "four nav items" | proposed (operator polish 2026-10-20) |
 | D41 | D | Single dark J.A.R.V.I.S. HUD theme (navy/cyan, red + black highlights) as CSS tokens in `styles.css`; Desktop launcher `scripts/launch.ps1` + `scripts/install-shortcut.ps1` (icon `scripts/yarvis.ico`) | proposed (operator polish 2026-10-20) |

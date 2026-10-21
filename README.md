@@ -6,15 +6,15 @@ since a configured date), screens every message through TypeSafe's **Jev** decis
 spam, phishing and malicious content, asks Jev whether each clean message contains an action item,
 rewrites each hit into a one-line to-do with a single-shot `claude -p` call, and stores the results in
 a **Google Sheet** that a small **React** front end renders as a combined to-do list, a quarantine
-folder, a connected-apps page and a settings page.
+folder and a Controls page (connections, settings and the logo picker).
 
 **Guardrails.** WhatsApp and Gmail are **read only**, pinned in code and tests. Google Sheets (plus
 the gitignored `private/` folder) is the only write target. Quarantined messages never reach the
 generating model.
 
-> **Phase 1 complete** — issues #2–#8, #15 closed. v0 runs end to end in fake mode (refresh pipeline,
-> Todos/Quarantine/Controls, `yarvis doctor`, smoke gate, CI on Ubuntu). 415 tests passing,
-> 0 type errors, 0 lint violations. Connecting real accounts is the manual steps M1-M6 in
+> **Phase 1.1 complete** — issues #9–#12 closed. Running live on real Gmail, WhatsApp, Jev and Google
+> Sheets, with the Y.A.R.V.I.S. HUD theme, 10 selectable logos, the merged Controls page and a Desktop
+> shortcut. 453 tests passing, 0 type errors, 0 lint violations. Remaining operator steps M5–M6 are in
 > [docs/plans/master_plan.md](docs/plans/master_plan.md).
 
 ## Stack
@@ -161,6 +161,7 @@ yarvis/
 ├── server/src/             # Express app, connectors/{gmail,whatsapp,sheets}, ai/{jev,extract,decide},
 │                           # pipeline/refresh, routes, cli, doctor, fakes
 ├── server/scripts/smoke.ts # `npm run smoke`
+├── scripts/                # Desktop launcher: launch.ps1, install-shortcut.ps1, yarvis.ico
 ├── web/src/                # React pages: Todos, Quarantine, Controls (logo picker + connections)
 ├── private/                # GITIGNORED except private/README.md: settings, tokens, caches
 └── docs/plans/master_plan.md

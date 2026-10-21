@@ -4,7 +4,7 @@
 
 Single-user local home assistant (Jarvis style, optional pirate-mode strings). v0 pulls messages
 READ-ONLY from the operator's WhatsApp (allowlisted chats, on-demand Baileys linked-device session)
-and Gmail (inbox since 2026-10-01), screens them with TypeSafe Jev (quarantine), extracts one-line
+and Gmail (inbox since `settings.since`), screens them with TypeSafe Jev (quarantine), extracts one-line
 to-dos with a `claude -p` single-shot, and stores everything in a Google Sheet rendered by a React
 front end. Sheets and the gitignored `private/` folder are the ONLY write targets.
 Plan: [docs/plans/master_plan.md](docs/plans/master_plan.md).
@@ -39,6 +39,7 @@ npm test                      # vitest unit + integration
 npm run e2e                   # playwright smoke in fake mode
 npm run smoke                 # fake-mode end-to-end refresh gate
 npm run yarvis -- gmail:auth | wa:link [--reset] | wa:chats | doctor | refresh
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-shortcut.ps1   # Desktop shortcut
 ```
 
 Gate: run `npm run typecheck`, `npm run lint`, `npm run build`, `npm test`, `npm run e2e` and
@@ -47,7 +48,8 @@ Gate: run `npm run typecheck`, `npm run lint`, `npm run build`, `npm test`, `npm
 ## Layout
 
 ```
-shared/src/        types.ts (Message, Todo, scores, RefreshStatus, status), sheet.ts (pinned headers), ids.ts
+shared/src/        types.ts (Message, Todo, scores, RefreshStatus, status), sheet.ts (pinned headers), ids.ts,
+                   since.ts (the one settings.since parser), logos.ts (LOGO_IDS)
 server/src/        index.ts (app factory), main.ts, http.ts (guard, sendError), access-log.ts, setup.ts,
                    cli.ts (verb dispatcher) + wa-cli.ts + refresh-cli.ts, doctor.ts, lock.ts (refresh.lock),
                    config/ (paths, env, settings), connectors/{gmail,whatsapp,sheets}.ts,
@@ -55,8 +57,9 @@ server/src/        index.ts (app factory), main.ts, http.ts (guard, sendError), 
                    routes/{health,settings,todos,quarantine,refresh,status}.ts, util/, fakes/ (5 seams)
 server/scripts/    smoke.ts (npm run smoke)
 server/fixtures/   synthetic seeds + manifest.ts (EXPECTED fake-mode totals)      server/test/   vitest
-web/src/           App.tsx, api.ts, refresh-poll.ts, i18n/strings.ts (en + pirate), ui/,
-                   pages/{Todos,Quarantine,ConnectedApps,Settings}.tsx
+web/src/           App.tsx, api.ts, refresh-poll.ts, i18n/strings.ts (en + pirate), ui/{format,logos},
+                   pages/{Todos,Quarantine,Controls,Connections}.tsx, styles.css (HUD theme tokens)
+scripts/           launch.ps1 + install-shortcut.ps1 + yarvis.ico (Desktop shortcut; ASCII-only .ps1)
 web/e2e/           playwright smoke (own fake server on 8797/5183)
 private/           GITIGNORED (only private/README.md tracked): settings.json, .env, OAuth client,
                    gmail-token.json, service-account.json, wa-auth/, state.json, cache/; fake/ in fake mode
@@ -96,7 +99,7 @@ launcher: `scripts/launch.ps1` (shortcut via `scripts/install-shortcut.ps1`; kee
 
 ## Current state
 
-Phase 1 complete (2026-10-19) — v0 runs end to end in fake mode: refresh pipeline, Todos/Quarantine/Connected apps/Settings, `yarvis doctor`, smoke gate and CI (415 vitest + 8 e2e). Next: manual steps M1-M6 in the plan (connect Google, TypeSafe, WhatsApp; first real refresh).
+Phase 1.1 complete (2026-10-20) — running live on real Gmail, WhatsApp (4-chat allowlist), Jev and the Google Sheet; M1-M4 done; Y.A.R.V.I.S. HUD theme, 10 logos, Controls page, Desktop shortcut (453 vitest + 10 e2e). Open: M5 (#13) two-day observation, M6 (#14) publish check, #18 WhatsApp history backfill. Next: explore the next functionality slice.
 
 ## Environment requirements
 
@@ -113,4 +116,6 @@ Phase 1 complete (2026-10-19) — v0 runs end to end in fake mode: refresh pipel
 - npm runs scripts through cmd.exe on Windows: set env vars with `cross-env`, never inline `VAR=1`.
 - Vite on Windows: keep `--host 127.0.0.1 --strictPort`.
 - Fresh worktrees need `npm install` before the first gate.
+- WhatsApp sends a linked device its history ONCE, on the first connection after `wa:link`; whichever command connects first consumes it (`wa:chats` keeps only names). To backfill: re-link, clear the `whatsapp` cursor in `private/state.json`, refresh before `wa:chats` (#18).
+- The operator's `npm run dev` hot-reloads the working tree (tsx watch + Vite HMR): branch edits go live in their open app.
 - Windows npm installs the Claude CLI as `claude.cmd`; `ai/extract.ts` resolves `.exe`/`.cmd`/`.bat` and spawns a `.cmd` via `cmd.exe /d /s /c` with per-argument quoting — keep message content out of argv (prompt goes on stdin).
