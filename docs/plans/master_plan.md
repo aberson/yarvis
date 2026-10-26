@@ -371,7 +371,7 @@ real smoke gate, and lets the operator click through the UI before any account i
 | Baileys 7.x is an RC | API drift mid-build | Pin exact version in `package.json`; Step 5 reads the installed `node_modules/@whiskeysockets/baileys/lib/Types/Events.d.ts` before coding |
 | Jev rate limits unknown for direct API | Refresh of a large inbox throttled | SDK `RateLimitError` + backoff; `jev.concurrency` 2 (settings); decisions cache means each message is scored once |
 | Jev false negatives on phishing | Malicious mail reaches Claude extraction | Claude runs with no tools and emits JSON only; prompt wraps content as data; threshold tunable |
-| Gmail OAuth consent in Testing mode | Refresh token expires ~7 days after consent | Expected (pta_finance precedent); `yarvis gmail:auth` re-mints; the Controls page shows `lastError` |
+| Gmail OAuth consent in Testing mode | Refresh token expires ~7 days after consent | Expected (np-finance precedent); `yarvis gmail:auth` re-mints; the Controls page shows `lastError` |
 | `claude -p` seam inherits harness config | Timeouts / non-JSON | neutral cwd + `--tools ""` + `--strict-mcp-config` + `--disable-slash-commands` + pinned fast model + envelope-aware tolerant parser; no bare-mode flag (it disables OAuth) |
 | Public repo + private folder | Secret leak | `private/` gitignored except `private/README.md`; Step 1 test asserts tracked + would-be-tracked files under `private/` are exactly that file; CI and M6 run `git ls-files private` on the committed tree |
 | Promotions/Social volume | Many Jev calls on first run | First run bounded by since-date (2026-10-01); cost ≈ $0.042 per 1M input tokens |
@@ -1116,6 +1116,6 @@ Invocation: `claude -p --tools "" --model claude-haiku-5-5 --output-format json 
 
 ### 12.6 Reused workspace patterns (producing files read)
 
-- Gmail scope pin + provenance-independent runtime check: `pta_finance/pta_finance/gmail_source.py` (module docstring).
-- Row-targeted atomic upsert + retry/backoff: `pta_finance/pta_finance/sheets.py` (`upsert_rows`, `_with_retry`).
+- Gmail scope pin + provenance-independent runtime check: `np-finance/np_finance/gmail_source.py` (module docstring).
+- Row-targeted atomic upsert + retry/backoff: `np-finance/np_finance/sheets.py` (`upsert_rows`, `_with_retry`).
 - `claude -p` seam (stdin prompt, neutral cwd, tree kill, partial flush): `coding_without_pants/src/cwp/drafting.py` (`_execute`, `call_claude`).
